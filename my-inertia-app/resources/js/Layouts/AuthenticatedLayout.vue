@@ -17,7 +17,7 @@ const showingNavigationDropdown = ref(false);
                 <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
                     <div class="flex h-16 justify-between">
                        <div class="flex">
-                            <div class="hidden space-x-8 sm:-my-px sm:ms-10 sm:flex">
+                                <div class="hidden space-x-8 sm:-my-px sm:ms-10 sm:flex">
                                 <NavLink :href="route('dashboard')" :active="route().current('dashboard')">
                                     Dashboard
                                 </NavLink>
@@ -27,8 +27,12 @@ const showingNavigationDropdown = ref(false);
                                 <NavLink :href="route('companies.index')" :active="route().current('companies.index')">
                                     Companies
                                 </NavLink>
-                                <NavLink :href="route('conventions.index')" :active="route().current('conventions.index')">
-                                    Conventions
+                               
+                                <NavLink :href="route('fichesnavette.index')" :active="route().current('fichesnavette.index')">
+                                    Fiche Navette
+                                </NavLink>
+                                <NavLink :href="route('patients.index')" :active="route().current('patients.index')">
+                                    Patients
                                 </NavLink>
                             </div>
                         </div>
@@ -117,7 +121,7 @@ const showingNavigationDropdown = ref(false);
                     class="sm:hidden"
                 >
                     <div class="space-y-1 pb-3 pt-2">
-                                                      <ResponsiveNavLink :href="route('dashboard')" :active="route().current('dashboard')">
+                                <ResponsiveNavLink :href="route('dashboard')" :active="route().current('dashboard')">
                                     Dashboard
                                 </ResponsiveNavLink>
                                 <ResponsiveNavLink :href="route('services.index')" :active="route().current('services.index')">
@@ -126,8 +130,11 @@ const showingNavigationDropdown = ref(false);
                                 <ResponsiveNavLink :href="route('companies.index')" :active="route().current('companies.index')">
                                     Companies
                                 </ResponsiveNavLink>
-                                <ResponsiveNavLink :href="route('conventions.index')" :active="route().current('conventions.index')">
-                                    Conventions
+                                <ResponsiveNavLink :href="route('fichesnavette.index')" :active="route().current('fichesnavette.index')">
+                                    Fiche Navette
+                                </ResponsiveNavLink>
+                                <ResponsiveNavLink :href="route('patients.index')" :active="route().current('patients.index')">
+                                    Patients
                                 </ResponsiveNavLink>
 
                     </div>

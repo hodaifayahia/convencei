@@ -27,7 +27,7 @@ class CompanyController extends Controller
     public function store(Request $request)
     {
         $request->validate([
-            'name' => ['required', 'string', 'max:255', 'unique:companies,name'],
+            'name' => ['required', 'string', 'max:255'],
             'abbreviation' => ['nullable', 'string', 'max:255', 'unique:companies,abbreviation'],
             'augmentation' => ['nullable', 'numeric'],
             'pourcentage_company' => ['nullable', 'numeric', 'between:0,100'],
@@ -46,7 +46,7 @@ class CompanyController extends Controller
     public function update(Request $request, Company $company)
     {
         $request->validate([
-            'name' => ['required', 'string', 'max:255', Rule::unique('companies')->ignore($company->id)],
+            'name' => ['required', 'string', 'max:255'],
             'abbreviation' => ['nullable', 'string', 'max:255', Rule::unique('companies')->ignore($company->id, 'abbreviation')],
             'augmentation' => ['nullable', 'numeric'],
             'pourcentage_company' => ['nullable', 'numeric', 'between:0,100'],

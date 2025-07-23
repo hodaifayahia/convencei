@@ -41,4 +41,8 @@ class Convention extends Model
     {
         return $this->belongsTo(Company::class);
     }
+    public function patient()
+{
+    return $this->belongsTo(Patient::class);
+}
 }

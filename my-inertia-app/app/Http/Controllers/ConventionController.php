@@ -5,12 +5,18 @@ namespace App\Http\Controllers;
 use App\Models\Convention;
 use App\Models\Service; // For dropdowns
 use App\Models\Company; // For dropdowns
+use App\Models\Patient; // For dropdowns
+use App\Models\FicheNavette; // For next FN number
 use Illuminate\Http\Request;
 use Inertia\Inertia;
+use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 use Maatwebsite\Excel\Facades\Excel; // Make sure to install maatwebsite/excel
 use App\Imports\ConventionsImport; // We'll create this class next
-use Log;
+
 
 class ConventionController extends Controller
 {
@@ -31,12 +37,13 @@ class ConventionController extends Controller
         if ($serviceId) {
             $conventionsQuery->where('service_id', $serviceId);
         }
-
+$allPatients = Patient::all(); // This is where the API/DB call happens on the backend
         $conventions = $conventionsQuery->orderBy('created_at', 'desc')->get();
 
         // Fetch all services and companies for dropdowns in the form
         $allServices = Service::orderBy('name')->get(['id', 'name']);
         $allCompanies = Company::orderBy('name')->get(['id', 'name']);
+        $nextFNnumber = $this->getNextFNnumber();
 
         // Fetch selected service and company to display context and pre-fill form
         $selectedService = $serviceId ? Service::find($serviceId) : null;
@@ -46,9 +53,31 @@ class ConventionController extends Controller
             'conventions' => $conventions,
             'allServices' => $allServices,
             'allCompanies' => $allCompanies,
+            'nextFNnumber' => $nextFNnumber, // Pass the next FN number
             'selectedService' => $selectedService,
             'selectedCompany' => $selectedCompany,
+            'companyId' => $companyId,
+            'serviceId' => $serviceId,
+            'allPatients' => $allPatients, // Pass all patients for the dropdown
         ]);
+    }
+      private function getNextFNnumber(): string
+    {
+        $currentYear = Carbon::now()->year;
+
+        // Find the latest FNnumber for the current year
+        $lastFicheNavette = FicheNavette::where('FNnumber', 'like', "%/{$currentYear}")
+                                        ->orderBy(DB::raw("CAST(SUBSTRING_INDEX(FNnumber, '/', 1) AS UNSIGNED)"), 'desc')
+                                        ->first();
+
+        $nextNumber = 1;
+        if ($lastFicheNavette) {
+            $parts = explode('/', $lastFicheNavette->FNnumber);
+            if (count($parts) === 2 && (int)$parts[1] === $currentYear) {
+                $nextNumber = (int)$parts[0] + 1;
+            }
+        }
+        return "{$nextNumber}/{$currentYear}";
     }
 
     /**
@@ -59,7 +88,7 @@ class ConventionController extends Controller
         $request->validate([
             'service_id' => ['nullable', 'exists:services,id'],
             'company_id' => ['nullable', 'exists:companies,id'],
-            'code' => ['required', 'string', 'max:255', 'unique:convention,code'],
+            'code' => ['required', 'string', 'max:255'],
             'designation_prestation' => ['required', 'string', 'max:255'],
             'montant_ht' => ['nullable', 'numeric'],
             'montant_global_ttc' => ['nullable', 'numeric'],
@@ -84,7 +113,7 @@ class ConventionController extends Controller
         $request->validate([
             'service_id' => ['nullable', 'exists:services,id'],
             'company_id' => ['nullable', 'exists:companies,id'],
-            'code' => ['required', 'string', 'max:255', Rule::unique('convention')->ignore($convention->id)],
+            'code' => ['required', 'string', 'max:255'],
             'designation_prestation' => ['required', 'string', 'max:255'],
             'montant_ht' => ['nullable', 'numeric'],
             'montant_global_ttc' => ['nullable', 'numeric'],
@@ -94,11 +123,15 @@ class ConventionController extends Controller
 
         $convention->update($request->all());
 
-        // Redirect back with context parameters to maintain filter
-        return redirect()->route('conventions.index', [
+         return back()->with([
             'company_id' => $request->company_id,
             'service_id' => $request->service_id
         ])->with('success', 'Convention updated successfully!');
+        // Redirect back with context parameters to maintain filter
+        // return redirect()->route('conventions.index', [
+        //     'company_id' => $request->company_id,
+        //     'service_id' => $request->service_id
+        // ];
     }
 
     /**
@@ -112,7 +145,7 @@ class ConventionController extends Controller
         $convention->delete();
 
         // Redirect back with context parameters to maintain filter
-        return redirect()->route('conventions.index', [
+          return back()->with([
             'company_id' => $companyId,
             'service_id' => $serviceId
         ])->with('success', 'Convention deleted successfully!');

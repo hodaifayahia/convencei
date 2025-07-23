@@ -6,6 +6,8 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ServiceController;
 use App\Http\Controllers\CompanyController;
 use App\Http\Controllers\ConventionController;
+use App\Http\Controllers\PatientController;
+use App\Http\Controllers\FicheNavetteController;
 
 use Inertia\Inertia;
 
@@ -40,12 +42,25 @@ Route::resource('companies', CompanyController::class)
 Route::resource('conventions', ConventionController::class)
     ->only(['index', 'store', 'update', 'destroy'])
     ->middleware(['auth', 'verified']);
+    Route::resource('patients', PatientController::class); // Ensure this line exists
+// New route for showing and potentially printing after creation
+Route::get('/fiches-navette/{ficheNavette}/show-and-print', [FicheNavetteController::class, 'showAndPrint'])
+    ->name('fichesnavette.show_and_print');
+
+// Existing route for PDF generation
+Route::get('/fiches-navette/{ficheNavette}/ticket-pdf', [FicheNavetteController::class, 'generateTicketPdf'])
+    ->name('fichesnavette.ticket-pdf');
 
 // NEW: Route for Excel import
 Route::post('conventions/import', [ConventionController::class, 'import'])
     ->name('conventions.import')
     ->middleware(['auth', 'verified']);
     Route::get('/conventions/{convention}/edit', [ConventionController::class, 'edit'])->name('conventions.edit');
+    Route::resource('fichesnavette',FicheNavetteController::class)
+    ->middleware(['auth', 'verified']);
+        Route::put('/fichesnavette/{ficheNavette}/status', [FicheNavetteController::class, 'updateStatus'])->name('fichesnavette.updateStatus');
+Route::get('/patients/{patient}/fiches-navette', [FicheNavetteController::class, 'indexForPatient'])
+    ->name('patients.fichesnavette.index');
 
 
     // Add this route to your web.php for testing
