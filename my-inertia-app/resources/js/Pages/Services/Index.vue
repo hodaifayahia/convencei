@@ -6,9 +6,10 @@ import ServiceFormModal from '@/Components/services/ServiceFormModal.vue';
 import ServiceCard from '@/Components/services/ServiceCard.vue';
 import CompanyConventionsTable from '@/Components/services/CompanyConventionsTable.vue';
 import CompanyCard from '@/Components/Companies/CompanyCard.vue';
-import { useToast } from 'vue-toastification'; // Import toast for notifications
+import { useToast } from 'vue-toastification';
+import { debounce } from 'lodash';
 
-const toast = useToast(); // Initialize toast
+const toast = useToast();
 
 const props = defineProps({
     services: {
@@ -23,17 +24,30 @@ const props = defineProps({
         type: Array,
         default: () => [],
     },
+    selectedService: {
+        type: Object,
+        default: null,
+    },
     nextFNnumber: {
         type: String,
-        default: 1, // Default to 1 if not provided
+        default: '1/CurrentYear',
     },
-    allPatients: { // NEW PROP for PatientSelector
+    allPatients: {
         type: Array,
         default: () => [],
     },
     conventions: {
-        type: Array,
-        default: () => [],
+        type: Object, // Expecting a paginated object
+        default: () => ({
+            data: [],
+            current_page: 1,
+            last_page: 1,
+            total: 0,
+            per_page: 30,
+            links: [],
+            from: 0,
+            to: 0
+        }),
     },
     flash: {
         type: Object,
@@ -47,9 +61,47 @@ const form = useForm({
     company_id: props.selectedCompany ? props.selectedCompany.id : null,
 });
 
+const filters = ref({
+    search: '',
+    perPage: 15,
+    page: 1,
+    company_id: props.selectedCompany?.id || null,
+    service_id: null
+});
+
+const headerSearchQuery = ref('');
+const serviceCardsSearchQuery = ref(''); // Correctly named for clarity
+
+const selectedCompanyLocal = ref(props.selectedCompany || null);
+
+// Debounced function to load conventions, preserving scroll
+const loadConventions = debounce(() => {
+    router.get(route('services.index'), {
+        ...filters.value,
+    }, {
+        preserveState: true,
+        preserveScroll: true,
+        replace: true
+    });
+}, 300);
+
+// Watch for changes in selectedCompany prop to update filters and potentially trigger a reload
+watch(() => props.selectedCompany, (newCompany) => {
+    selectedCompanyLocal.value = newCompany;
+    filters.value.company_id = newCompany?.id || null;
+    filters.value.page = 1;
+    filters.value.service_id = null;
+    // No direct call to loadConventions here, as selectCompanyAndShowServices handles the navigation
+    // This watch primarily ensures `filters.value.company_id` is updated when `props.selectedCompany` changes from outside.
+}, { immediate: true });
+
+const handleUpdateFilters = (newFilters) => {
+    filters.value = { ...filters.value, ...newFilters };
+    loadConventions();
+};
+
 const isServiceModalOpen = ref(false);
 const isEditingService = ref(false);
-const searchQuery = ref('');
 
 const pageHeaderTitle = computed(() => {
     return props.selectedCompany
@@ -57,11 +109,21 @@ const pageHeaderTitle = computed(() => {
         : 'All Our Services';
 });
 
+// Corrected: filteredServices should filter props.services, not props.allServices
 const filteredServices = computed(() => {
-    if (!searchQuery.value) return props.services;
-    const query = searchQuery.value.toLowerCase();
+    if (!serviceCardsSearchQuery.value) return props.services;
+    const query = serviceCardsSearchQuery.value.toLowerCase();
     return props.services.filter(service =>
         service.name.toLowerCase().includes(query)
+    );
+});
+
+const filteredCompanies = computed(() => {
+    if (!headerSearchQuery.value) return props.allCompanies;
+    const query = headerSearchQuery.value.toLowerCase();
+    return props.allCompanies.filter(company =>
+        company.name.toLowerCase().includes(query) ||
+        company.abbreviation?.toLowerCase().includes(query)
     );
 });
 
@@ -87,14 +149,16 @@ const submitServiceForm = () => {
                 form.reset();
                 isServiceModalOpen.value = false;
                 form.company_id = props.selectedCompany ? props.selectedCompany.id : null;
-                toast.success('Service updated successfully!'); // Toast for success on update
+                toast.success('Service updated successfully!');
             },
             onError: (errors) => {
                 let errorMessage = 'Failed to update service. Please check the form.';
                 if (errors.name) errorMessage += ` Name: ${errors.name}`;
                 if (errors.company_id) errorMessage += ` Company: ${errors.company_id}`;
                 toast.error(errorMessage);
-            }
+            },
+            preserveState: true,
+            preserveScroll: true
         });
     } else {
         form.post(route('services.store'), {
@@ -102,14 +166,16 @@ const submitServiceForm = () => {
                 form.reset();
                 isServiceModalOpen.value = false;
                 form.company_id = props.selectedCompany ? props.selectedCompany.id : null;
-                toast.success('Service created successfully!'); // Toast for success on creation
+                toast.success('Service created successfully!');
             },
             onError: (errors) => {
                 let errorMessage = 'Failed to create service. Please check the form.';
                 if (errors.name) errorMessage += ` Name: ${errors.name}`;
                 if (errors.company_id) errorMessage += ` Company: ${errors.company_id}`;
                 toast.error(errorMessage);
-            }
+            },
+            preserveState: true,
+            preserveScroll: true
         });
     }
 };
@@ -118,13 +184,15 @@ const deleteService = (serviceId) => {
     if (confirm('Are you sure you want to delete this service? This action cannot be undone.')) {
         router.delete(route('services.destroy', serviceId), {
             onSuccess: () => {
-                toast.info('Service deleted successfully!'); // Toast for success on deletion
+                toast.info('Service deleted successfully!');
             },
             onError: (errors) => {
                 let errorMessage = 'Failed to delete service.';
                 if (errors.general) errorMessage += ` ${errors.general}`;
                 toast.error(errorMessage);
-            }
+            },
+            preserveState: true,
+            preserveScroll: true
         });
     }
 };
@@ -137,7 +205,6 @@ const selectCompanyAndShowServices = (companyId) => {
     router.get(route('services.index', { company_id: companyId }));
 };
 
-// Watch for flash messages and display them as toasts
 watch(() => props.flash, (newFlash) => {
     if (newFlash && newFlash.success) {
         toast.success(newFlash.success);
@@ -185,7 +252,7 @@ watch(() => props.flash, (newFlash) => {
                         @click="openAddServiceModal"
                         class="inline-flex items-center px-4 py-2 bg-green-600 border border-transparent rounded-md font-semibold text-xs text-white uppercase tracking-widest hover:bg-green-700 focus:bg-green-700 active:bg-green-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition ease-in-out duration-150"
                     >
-                        Add New Service
+                        Add New Service 
                     </button>
                 </div>
             </div>
@@ -193,7 +260,8 @@ watch(() => props.flash, (newFlash) => {
 
         <div class="py-8">
             <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div id="service-form" class="bg-white rounded-2xl shadow-xl border border-gray-100 mb-8 overflow-hidden">
+                <div id="service-form" class="bg-white rounded-2xl shadow-xl border border-gray-100 mb-8 overflow-hidden"
+                     v-show="isServiceModalOpen">
                     <div class="bg-gradient-to-r from-green-600 to-emerald-600 px-8 py-6">
                         <h3 class="text-2xl font-bold text-white flex items-center">
                             <svg class="w-8 h-8 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -221,11 +289,9 @@ watch(() => props.flash, (newFlash) => {
                                 </svg>
                             </div>
                             <input
-                                v-model="searchQuery"
-                                type="text"
+                                v-model="serviceCardsSearchQuery" type="text"
                                 class="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-xl leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                                placeholder="Search services or conventions..."
-                            />
+                                placeholder="Search services..." />
                         </div>
                     </div>
 
@@ -248,18 +314,16 @@ watch(() => props.flash, (newFlash) => {
                             </svg>
                         </div>
                         <h3 class="text-xl font-semibold text-gray-900 mb-2">
-                            {{ searchQuery ? 'No services found' : 'No services yet' }}
-                        </h3>
+                            {{ serviceCardsSearchQuery ? 'No services found' : 'No services yet' }} </h3>
                         <p class="text-gray-600 mb-6 max-w-md mx-auto">
-                            {{ searchQuery
+                            {{ serviceCardsSearchQuery
                                 ? 'Try adjusting your search terms or clear the search to see all services.'
                                 : `Start by adding services for ${props.selectedCompany.name} using the button above.`
                             }}
                         </p>
                         <button
-                            v-if="searchQuery"
-                            @click="searchQuery = ''"
-                            class="px-6 py-3 bg-green-600 text-white rounded-xl font-semibold hover:bg-green-700 transition-colors"
+                            v-if="serviceCardsSearchQuery"
+                            @click="serviceCardsSearchQuery = ''" class="px-6 py-3 bg-green-600 text-white rounded-xl font-semibold hover:bg-green-700 transition-colors"
                         >
                             Clear Search
                         </button>
@@ -269,8 +333,9 @@ watch(() => props.flash, (newFlash) => {
                         :conventions="conventions"
                         :allPatients="props.allPatients"
                         :selected-company="selectedCompany"
-                        :next-fn-number="props.nextFNnumber"
-                        :search-query="searchQuery"
+                        :nextFNnumber="nextFNnumber"
+                        :filters="filters"
+                        @updateFilters="handleUpdateFilters"
                     />
                 </template>
 
@@ -287,18 +352,16 @@ watch(() => props.flash, (newFlash) => {
                                 </svg>
                             </div>
                             <input
-                                v-model="searchQuery"
-                                type="text"
+                                v-model="headerSearchQuery" type="text"
                                 class="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-xl leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                                 placeholder="Search companies..."
                             />
                         </div>
                     </div>
 
-                    <div v-if="allCompanies.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <div v-if="filteredCompanies.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         <CompanyCard
-                            v-for="company in allCompanies"
-                            :key="company.id"
+                            v-for="company in filteredCompanies" :key="company.id"
                             :company="company"
                             @view-services="selectCompanyAndShowServices"
                             @edit="null"
@@ -311,10 +374,20 @@ watch(() => props.flash, (newFlash) => {
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
                             </svg>
                         </div>
-                        <h3 class="text-xl font-semibold text-gray-900 mb-2">No Companies Available</h3>
+                        <h3 class="text-xl font-semibold text-gray-900 mb-2">
+                            {{ headerSearchQuery ? 'No companies found' : 'No Companies Available' }} </h3>
                         <p class="text-gray-600 mb-6 max-w-md mx-auto">
-                            There are no companies to display. Please add some companies first from the Companies Management page.
+                            {{ headerSearchQuery
+                                ? 'Try adjusting your search terms or clear the search to see all companies.'
+                                : 'There are no companies to display. Please add some companies first from the Companies Management page.'
+                            }}
                         </p>
+                        <button
+                            v-if="headerSearchQuery"
+                            @click="headerSearchQuery = ''" class="px-6 py-3 bg-green-600 text-white rounded-xl font-semibold hover:bg-green-700 transition-colors"
+                        >
+                            Clear Search
+                        </button>
                     </div>
                 </template>
             </div>

@@ -35,6 +35,16 @@ const formatdate = (dateString) => {
 const getFicheNavetteCompanyName = (ficheNavette) => {
     return ficheNavette.items?.[0]?.convention?.company?.name || 'N/A';
 };
+
+const getInsuredPersonDisplay = (ficheNavette) => {
+    if (ficheNavette.family_auth === 'adherent') {
+        return '(Adherent)';
+    }
+    if (ficheNavette.insured) {
+        return `${ficheNavette.insured.Lastname} ${ficheNavette.insured.Firstname}`;
+    }
+    return 'Assured not specified';
+};
 </script>
 
 <template>
@@ -74,13 +84,7 @@ const getFicheNavetteCompanyName = (ficheNavette) => {
                             ${ficheNavette.patient.Firstname}` : 'N/A' }}
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-                            <span v-if="ficheNavette.family_auth === 'adherent'">
-                                (Adherent)
-                            </span>
-                            <span v-else>
-                                {{ ficheNavette.last_name_beneficiary }}
-                                {{ ficheNavette.first_name_beneficiary }}
-                            </span>
+                            {{ getInsuredPersonDisplay(ficheNavette) }}
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
                             {{ formatdate(ficheNavette.fiche_date) }}

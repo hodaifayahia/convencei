@@ -55,9 +55,24 @@ const formatCurrency = (amount) => {
                     ficheNavette.patient.phone || '-' }}</span>
             </div>
             <div class="flex items-center">
+                <span class="font-semibold text-gray-600 mr-2">Assured:</span>
+                <span class="text-gray-900 font-medium">
+                    {{ ficheNavette.family_auth === 'adherent' 
+                        ? '(Adherent)'
+                        : ficheNavette.insured 
+                            ? `${ficheNavette.insured.Lastname} ${ficheNavette.insured.Firstname}`
+                            : 'Not specified' 
+                    }}
+                </span>
+            </div>
+            <div class="flex items-center">
                 <span class="font-semibold text-gray-600 mr-2">Assured Phone:</span>
-                <span class="text-gray-900 font-medium">{{
-                    ficheNavette.phone_beneficiary || '-' }}</span>
+                <span class="text-gray-900 font-medium">
+                    {{ ficheNavette.family_auth === 'adherent'
+                        ? ficheNavette.patient?.phone || '-'
+                        : ficheNavette.insuredPerson?.phone || '-' 
+                    }}
+                </span>
             </div>
         </div>
     </div>
@@ -86,14 +101,14 @@ const formatCurrency = (amount) => {
             <p class="text-sm font-medium text-violet-700 mb-1">Total Charge
                 Ent. (Fiche) </p>
             <p class="text-2xl font-extrabold text-violet-800">{{
-                formatCurrency(ficheNavette.patient_share) }}</p>
+                formatCurrency(ficheNavette.organisme_share) }}</p>
         </div>
         <div
             class="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4 shadow-md border border-green-200 transform hover:scale-105 transition-transform duration-200 ease-in-out">
             <p class="text-sm font-medium text-green-700 mb-1">Total Charge Bén.
                 (Fiche)</p>
             <p class="text-2xl font-extrabold text-green-800">{{
-                formatCurrency(ficheNavette.organisme_share) }}</p>
+                formatCurrency(ficheNavette.patient_share ) }}</p>
         </div>
     </div>
 
@@ -146,7 +161,7 @@ const formatCurrency = (amount) => {
                     <td
                         class="px-4 py-2 whitespace-nowrap text-sm text-gray-700">
                         {{
-                        formatCurrency(item.convention?.montant_prise_charge_entreprise)
+                        formatCurrency(item.convention?.montant_prise_charge_entreprise )
                         }}</td>
                 </tr>
                 <tr v-if="ficheNavette.items.length === 0">

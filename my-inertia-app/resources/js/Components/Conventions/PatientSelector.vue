@@ -1,183 +1,252 @@
 <script setup>
-import { defineProps, defineEmits, ref, watch, nextTick, computed } from 'vue'; // Added 'computed'
+import { defineProps, defineEmits, ref, watch, nextTick, computed } from 'vue';
 import { useForm, router } from '@inertiajs/vue3';
-// Make sure you have a toast library installed and imported, e.g., useToast from 'vue-toastification'
-// import { useToast } from 'vue-toastification'; // Uncomment if using vue-toastification
+import debounce from 'lodash/debounce';
+import axios from 'axios';
 
 const props = defineProps({
     allPatients: {
         type: Array,
         default: () => [],
     },
-    modelValue: {
+    modelValue: { // This is the currently selected patient ID from the parent
         type: Number,
         default: null,
     },
+    label: {
+        type: String,
+        default: 'Patient'
+    }
 });
 
 const emit = defineEmits(['update:modelValue', 'patientAdded', 'patientsUpdated']);
 
-// const toast = useToast(); // Uncomment if using vue-toastification
+// --- Toast Notification (for simple alerts, consider a dedicated toast library for richer UI) ---
 const showToast = (message, type = 'success') => {
-    // Replace with your actual toast implementation
-    // For now, using a simple alert
     alert(`${type.toUpperCase()}: ${message}`);
     console.log(`Toast - ${type}: ${message}`);
 };
 
+// --- Modals State ---
 const showAddPatientModal = ref(false);
 const showEditPatientModal = ref(false);
-const editingPatientId = ref(null);
-const patientSearchQuery = ref('');
-const selectedPatientIdInternal = ref(props.modelValue);
+const editingPatientId = ref(null); // ID of the patient currently being edited
 
+// --- Patient Search State ---
+const patientSearchQuery = ref('');
+const isSearchingPatients = ref(false);
+const filteredPatients = ref([]); // Results from API search
+const patientSearchError = ref(null);
+
+// --- Selected Patient State ---
+const selectedPatientIdInternal = ref(props.modelValue); // Internal representation of selected patient ID
+const currentSelectedPatientDetails = ref(null); // Full details of the currently selected patient
+
+// --- Form Definitions ---
 const newPatientForm = useForm({
     Firstname: '',
     Lastname: '',
     Parent: '',
     phone: '',
-    dateOfBirth: '',
+    dateOfBirth: '', // YYYY-MM-DD format
     gender: '',
     Idnum: '',
     nss: '',
 });
 
 const editPatientForm = useForm({
-    _method: 'put', // Important for PUT request for update action
+    _method: 'put', // Important for Laravel PUT method emulation
     Firstname: '',
     Lastname: '',
     Parent: '',
     phone: '',
-    dateOfBirth: '',
+    dateOfBirth: '', // YYYY-MM-DD format
     gender: '',
     Idnum: '',
     nss: '',
 });
 
-// Filtered patients based on search query
-const filteredPatients = ref([]);
+// --- Computed Property for Selected Patient Details ---
+const getSelectedPatientDetails = computed(() => {
+    return currentSelectedPatientDetails.value;
+});
 
-// Watch for changes in search query or allPatients prop to update filtered results
-watch([patientSearchQuery, () => props.allPatients, selectedPatientIdInternal], ([query, patients, selectedId]) => {
-    // If a patient is already selected, don't show search results
-    if (selectedId) {
-        filteredPatients.value = [];
+// Add a computed property for the display label
+const displayLabel = computed(() => {
+    return props.label === 'LAB' ? ' Insured Person' : 'Patient';
+});
+
+// --- Patient Search Logic ---
+const fetchPatients = debounce(async (query) => {
+    patientSearchError.value = null;
+    filteredPatients.value = []; // Clear previous results
+
+    if (!query) {
+        isSearchingPatients.value = false;
         return;
     }
 
-    if (query) {
-        const lowerQuery = query.toLowerCase();
-        const scored = patients.map(patient => {
-            let score = 0;
-            // Prioritize exact matches and then partial matches across fields
-            if (patient.Firstname?.toLowerCase() === lowerQuery) score += 5;
-            else if (patient.Firstname?.toLowerCase().includes(lowerQuery)) score += 3;
+    isSearchingPatients.value = true;
+    try {
+        // Use an AbortController to cancel previous requests if a new one starts quickly
+        // This helps prevent race conditions and unnecessary network activity.
+        const controller = new AbortController();
+        const signal = controller.signal;
 
-            if (patient.Lastname?.toLowerCase() === lowerQuery) score += 5;
-            else if (patient.Lastname?.toLowerCase().includes(lowerQuery)) score += 3;
+        // Debounce handles the timing, but manual abort is good for rapid typing
+        // Store controller to abort on next call if needed
+        if (fetchPatients.latestController) {
+            fetchPatients.latestController.abort();
+        }
+        fetchPatients.latestController = controller;
 
-            if (patient.Idnum?.toLowerCase() === lowerQuery) score += 4;
-            else if (patient.Idnum?.toLowerCase().includes(lowerQuery)) score += 2;
-
-            if (patient.phone?.toLowerCase().includes(lowerQuery)) score += 2;
-            if (patient.nss?.toLowerCase().includes(lowerQuery)) score += 2;
-
-            // Combine Firstname and Lastname for full name search
-            const fullName = `${patient.Firstname || ''} ${patient.Lastname || ''}`.trim().toLowerCase();
-            if (fullName.includes(lowerQuery)) score += 2; // Add score for full name matches
-
-            return { patient, score };
-        });
-
-        filteredPatients.value = scored
-            .filter(s => s.score > 0) // Only include patients with a matching score
-            .sort((a, b) => b.score - a.score) // Sort by score (highest first)
-            .map(s => s.patient)
-            .slice(0, 5); // Limit to the top 5 results
-    } else {
-        filteredPatients.value = []; // Clear results if no search query
+        const response = await axios.get(route('patients.search', { query: query }), { signal });
+        filteredPatients.value = response.data;
+    } catch (error) {
+        if (axios.isCancel(error)) {
+            // Request was cancelled, no need to show error to user
+            console.log('Search request cancelled:', error.message);
+            return;
+        }
+        console.error('Error fetching patients:', error);
+        showToast('Failed to fetch patients. Please try again.', 'error');
+        patientSearchError.value = 'Failed to load patients. Please check your connection or try again.';
+    } finally {
+        isSearchingPatients.value = false;
+        fetchPatients.latestController = null; // Clear controller
     }
-}, { immediate: true }); // Run immediately on component mount
+}, 300); // 300ms debounce
 
-// Watch for external changes to modelValue (if parent updates it)
-watch(() => props.modelValue, (newVal) => {
+watch(patientSearchQuery, (newQuery) => {
+    fetchPatients(newQuery);
+});
+
+// --- Load Patient Details by ID ---
+const loadPatientDetails = async (patientId) => {
+    if (!patientId) {
+        currentSelectedPatientDetails.value = null;
+        return;
+    }
+
+    // Try to find in already loaded data first (filtered, then allPatients prop)
+    let patient = filteredPatients.value.find(p => p.id === patientId);
+    if (!patient) {
+        patient = props.allPatients.find(p => p.id === patientId);
+    }
+
+    if (patient) {
+        // Create a deep copy to avoid direct mutation of props/filtered data
+        currentSelectedPatientDetails.value = { ...patient };
+        // Ensure dateOfBirth is consistently formatted for display
+        if (currentSelectedPatientDetails.value.dateOfBirth) {
+            currentSelectedPatientDetails.value.dateOfBirth = new Date(currentSelectedPatientDetails.value.dateOfBirth).toISOString().split('T')[0];
+        }
+        return;
+    }
+
+    // If not found locally, fetch from API
+    try {
+        const response = await axios.get(route('patients.show', patientId));
+        currentSelectedPatientDetails.value = response.data;
+        // Ensure dateOfBirth is consistently formatted for display
+        if (currentSelectedPatientDetails.value.dateOfBirth) {
+            currentSelectedPatientDetails.value.dateOfBirth = new Date(currentSelectedPatientDetails.value.dateOfBirth).toISOString().split('T')[0];
+        }
+    } catch (error) {
+        console.error(`Error fetching patient details for ID ${patientId}:`, error);
+        currentSelectedPatientDetails.value = null;
+        showToast('Failed to load patient details.', 'error');
+    }
+};
+
+// --- Watchers ---
+
+// Watch for external changes to modelValue (if parent component updates it)
+watch(() => props.modelValue, async (newVal) => {
     selectedPatientIdInternal.value = newVal;
+    await loadPatientDetails(newVal);
+    // Clear search state when an external value is set, as the patient is now selected
     if (newVal) {
-        // If a patient is selected externally, clear search query
         patientSearchQuery.value = '';
+        filteredPatients.value = [];
+        patientSearchError.value = null;
+    }
+}, { immediate: true }); // immediate: true runs the watcher on component mount
+
+// Watch internal selected patient ID to emit updates and load details
+watch(selectedPatientIdInternal, async (newVal, oldVal) => {
+    if (newVal !== oldVal) { // Prevent infinite loops if the value is the same
+        emit('update:modelValue', newVal);
+        await loadPatientDetails(newVal);
+        // Clear search state after a patient is manually selected from search results
+        if (newVal) {
+            patientSearchQuery.value = '';
+            filteredPatients.value = [];
+            patientSearchError.value = null;
+        }
     }
 });
 
-// Watch internal selected patient ID to emit updates and manage search query
-watch(selectedPatientIdInternal, (newVal) => {
-    emit('update:modelValue', newVal); // This updates v-model in parent!
-    if (newVal) {
-        patientSearchQuery.value = ''; // Clear search query when a patient is selected internally
-    }
-    // You might want to remove 'patientAdded' if it's redundant with 'update:modelValue'
-    // or if 'patientsUpdated' handles the refresh logic adequately.
-    // emit('patientAdded', newVal);
-});
-
-// New: Computed property to get the currently selected patient object
-const getSelectedPatientDetails = computed(() => {
-    return props.allPatients.find(p => p.id === selectedPatientIdInternal.value) || null;
-});
 
 // Watch for changes in editingPatientId to populate the edit form
-watch(editingPatientId, (newId) => {
+watch(editingPatientId, async (newId) => {
     if (newId) {
-        const patientToEdit = props.allPatients.find(p => p.id === newId);
-        if (patientToEdit) {
+        // Ensure currentSelectedPatientDetails is up-to-date before populating form
+        await loadPatientDetails(newId); // This ensures we have the latest details
+
+        const patientToEdit = currentSelectedPatientDetails.value; // Now this should be the correct patient
+
+        if (patientToEdit && patientToEdit.id === newId) {
             editPatientForm.Firstname = patientToEdit.Firstname || '';
             editPatientForm.Lastname = patientToEdit.Lastname || '';
             editPatientForm.Parent = patientToEdit.Parent || '';
             editPatientForm.phone = patientToEdit.phone || '';
-            // Ensure dateOfBirth is formatted correctly for input type="date"
+            // Ensure date is formatted correctly for the input type="date"
             editPatientForm.dateOfBirth = patientToEdit.dateOfBirth ? new Date(patientToEdit.dateOfBirth).toISOString().split('T')[0] : '';
             editPatientForm.gender = patientToEdit.gender || '';
             editPatientForm.Idnum = patientToEdit.Idnum || '';
             editPatientForm.nss = patientToEdit.nss || '';
+        } else {
+            console.warn(`Patient with ID ${newId} not found in current details for editing.`);
+            editPatientForm.reset();
+            showToast('Could not load patient details for editing.', 'error');
+            // Optionally close the modal if patient couldn't be loaded
+            showEditPatientModal.value = false;
         }
     } else {
-        editPatientForm.reset(); // Clear form if no patient is being edited
+        editPatientForm.reset(); // Clear form when no patient is selected for editing
     }
-}, { immediate: true });
+});
 
+// --- Form Submission Handlers ---
 
 const submitNewPatient = () => {
     newPatientForm.post(route('patients.store'), {
         onSuccess: (page) => {
-            const newPatient = page.props.flash?.newPatient;
-            let newlyAddedPatientId = null;
+            const newPatient = page.props.flash?.newPatient; // Assuming your backend flashes the new patient
 
             if (newPatient && newPatient.id) {
-                newlyAddedPatientId = newPatient.id;
-            }
-
-            if (newlyAddedPatientId) {
-                selectedPatientIdInternal.value = newlyAddedPatientId;
-                showToast('Patient added successfully! The new patient has been selected.');
+                // Directly select the newly added patient
+                selectedPatientIdInternal.value = newPatient.id;
+                // currentSelectedPatientDetails will be updated by the selectedPatientIdInternal watcher
+                showToast('Patient added successfully! The new patient has been selected.', 'success');
             } else {
-                showToast('Patient added successfully! Please refresh the page if the new patient is not visible.', 'warning');
+                showToast('Patient added successfully! (Note: Could not auto-select. Please refresh if not visible.)', 'warning');
             }
 
             newPatientForm.reset();
             showAddPatientModal.value = false;
-
-            // Emit an event to signal the parent to refresh its patient list
-            emit('patientsUpdated');
+            emit('patientsUpdated'); // Notify parent to potentially refetch allPatients if needed
         },
         onError: (errors) => {
             console.error('New patient submission errors:', errors);
-            let errorMessage = 'Failed to add patient. Please check the form.';
+            let errorMessage = 'Failed to add patient. Please correct the following issues:';
             for (const key in errors) {
-                if (errors.hasOwnProperty(key)) {
-                    errorMessage += `\n- ${key}: ${errors[key]}`;
-                }
+                errorMessage += `\n- ${errors[key][0]}`; // Take the first error message for each field
             }
             showToast(errorMessage, 'error');
         },
+        // To show validation errors inline, you would typically bind newPatientForm.errors to your input fields
     });
 };
 
@@ -187,55 +256,79 @@ const submitEditPatient = () => {
         return;
     }
 
-    // Ensure _method is set for PUT request
-    editPatientForm._method = 'put';
-
     editPatientForm.post(route('patients.update', editingPatientId.value), {
         onSuccess: (page) => {
-            showToast('Patient updated successfully!');
+            showToast('Patient updated successfully!', 'success');
             showEditPatientModal.value = false;
-            editingPatientId.value = null; // Clear editing state
+
+            // Update currentSelectedPatientDetails if the edited patient is the one currently selected
+            const updatedPatient = page.props.flash?.updatedPatient; // Assuming backend flashes updated patient
+            if (updatedPatient && currentSelectedPatientDetails.value && currentSelectedPatientDetails.value.id === updatedPatient.id) {
+                // Update specific fields of the currentSelectedPatientDetails reactivity
+                currentSelectedPatientDetails.value.Firstname = updatedPatient.Firstname;
+                currentSelectedPatientDetails.value.Lastname = updatedPatient.Lastname;
+                currentSelectedPatientDetails.value.Parent = updatedPatient.Parent;
+                currentSelectedPatientDetails.value.phone = updatedPatient.phone;
+                currentSelectedPatientDetails.value.gender = updatedPatient.gender;
+                currentSelectedPatientDetails.value.Idnum = updatedPatient.Idnum;
+                currentSelectedPatientDetails.value.nss = updatedPatient.nss;
+                // Ensure dateOfBirth is re-formatted correctly if updated
+                currentSelectedPatientDetails.value.dateOfBirth = updatedPatient.dateOfBirth ? new Date(updatedPatient.dateOfBirth).toISOString().split('T')[0] : '';
+            } else if (currentSelectedPatientDetails.value && currentSelectedPatientDetails.value.id === editingPatientId.value) {
+                // Fallback: if backend doesn't flash, use form data
+                currentSelectedPatientDetails.value.Firstname = editPatientForm.Firstname;
+                currentSelectedPatientDetails.value.Lastname = editPatientForm.Lastname;
+                currentSelectedPatientDetails.value.Parent = editPatientForm.Parent;
+                currentSelectedPatientDetails.value.phone = editPatientForm.phone;
+                currentSelectedPatientDetails.value.gender = editPatientForm.gender;
+                currentSelectedPatientDetails.value.Idnum = editPatientForm.Idnum;
+                currentSelectedPatientDetails.value.nss = editPatientForm.nss;
+                currentSelectedPatientDetails.value.dateOfBirth = editPatientForm.dateOfBirth; // Already correctly formatted by the form
+            }
+
+
+            editingPatientId.value = null; // Clear the editing ID
             editPatientForm.reset();
-
-            // Re-select the patient to ensure UI reflects changes if still selected
-            // This forces the computed property `getSelectedPatientDetails` to re-evaluate
-            const updatedPatientId = selectedPatientIdInternal.value;
-            selectedPatientIdInternal.value = null; // Temporarily clear to force re-evaluation
-            nextTick(() => { // Use nextTick to ensure the UI updates correctly
-                selectedPatientIdInternal.value = updatedPatientId;
-            });
-
-            // Emit an event to signal the parent to refresh its patient list
-            emit('patientsUpdated');
+            emit('patientsUpdated'); // Notify parent component that patient data might have changed
         },
         onError: (errors) => {
             console.error('Edit patient submission errors:', errors);
-            let errorMessage = 'Failed to update patient. Please check the form.';
+            let errorMessage = 'Failed to update patient. Please correct the following issues:';
             for (const key in errors) {
-                if (errors.hasOwnProperty(key)) {
-                    errorMessage += `\n- ${key}: ${errors[key]}`;
-                }
+                errorMessage += `\n- ${errors[key][0]}`;
             }
             showToast(errorMessage, 'error');
         },
+        // To show validation errors inline, you would typically bind editPatientForm.errors to your input fields
     });
 };
 
-// Simplified: Removed getSelectedPatientName as getSelectedPatientDetails is more comprehensive
-// const getSelectedPatientName = () => {
-//     const patient = props.allPatients.find(p => p.id === selectedPatientIdInternal.value);
-//     return patient ? `${patient.Firstname} ${patient.Lastname}` : 'No patient selected';
-// };
-
-const openEditModal = (patientId) => {
-    editingPatientId.value = patientId;
+// --- UI Actions ---
+const openEditModal = async (patientId) => {
+    editingPatientId.value = patientId; // This watcher will trigger the loadPatientDetails and form hydration
     showEditPatientModal.value = true;
+    await nextTick(); // Wait for DOM update
+    // You might want to focus the first input field here
 };
 
 const clearSelection = () => {
+    // 1. Reset the internal selected patient ID
     selectedPatientIdInternal.value = null;
-    patientSearchQuery.value = ''; // Clear search query
-    filteredPatients.value = []; // Clear filtered results
+    // 2. Explicitly clear the full patient details object
+    currentSelectedPatientDetails.value = null;
+
+    // 3. Clear the search query and results
+    patientSearchQuery.value = '';
+    filteredPatients.value = [];
+    patientSearchError.value = null;
+
+    // 4. Important: Emit update:modelValue with null to notify parent component
+    //    that the selection has been cleared. This is implicitly handled by the watcher
+    //    on selectedPatientIdInternal, but explicitly calling it here ensures
+    //    the parent is immediately aware of the change.
+    // emit('update:modelValue', null); // This line is redundant due to watch(selectedPatientIdInternal)
+
+    // The search input will become enabled again because getSelectedPatientDetails will be null
 };
 </script>
 
@@ -246,98 +339,128 @@ const clearSelection = () => {
                 <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M12 20.005v-2.354a4 4 0 00-4-4H4v-2c0-2.209 1.791-4 4-4h4m4 0h4c2.209 0 4 1.791 4 4v2h-4a4 4 0 00-4 4v2.354"></path>
                 </svg>
-                Select Patient
+                Select {{ displayLabel }}
             </h3>
         </div>
 
         <div class="p-6">
-            <div v-if="getSelectedPatientDetails" class="mb-4 p-4 border border-teal-300 bg-teal-50 rounded-lg shadow-sm">
+            <!-- Add this new section for selected patient -->
+            <div v-if="getSelectedPatientDetails" 
+                 class="mb-6 p-4 bg-teal-50 border-2 border-teal-200 rounded-lg">
                 <div class="flex items-center justify-between mb-2">
-                    <h4 class="font-semibold text-teal-800">Selected Patient:</h4>
-                    <button
-                        @click="clearSelection"
-                        type="button"
-                        class="text-red-600 hover:text-red-800 text-sm font-medium flex items-center"
-                        title="Clear current patient selection"
-                    >
-                        <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                        Clear Selection
-                    </button>
-                </div>
-                <p class="text-lg font-bold text-gray-900">
-                    {{ getSelectedPatientDetails.Firstname }} {{ getSelectedPatientDetails.Lastname }}
-                </p>
-                <p class="text-sm text-gray-700">
-                    ID: {{ getSelectedPatientDetails.Idnum || '-' }} | Phone: {{ getSelectedPatientDetails.phone || '-' }}
-                </p>
-                <p class="text-sm text-gray-700">
-                    NSS: {{ getSelectedPatientDetails.nss || '-' }} | DoB: {{ getSelectedPatientDetails.dateOfBirth || '-' }}
-                </p>
-                <div class="mt-3 text-right">
-                    <button
-                        @click="openEditModal(getSelectedPatientDetails.id)"
-                        type="button"
-                        class="text-blue-600 hover:text-blue-800 text-sm font-medium flex items-center ml-auto"
-                        title="Edit this patient's details"
-                    >
-                        <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
-                        Edit Selected Patient
-                    </button>
-                </div>
-            </div>
-
-            <div v-else>
-                <div class="mb-4">
-                    <label for="patientSearch" class="block text-sm font-semibold text-gray-700 mb-2">Search or Select Patient</label>
-                    <input
-                        type="text"
-                        id="patientSearch"
-                        v-model="patientSearchQuery"
-                        placeholder="Search by name, ID, phone, or NSS..."
-                        class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 transition-colors"
-                    />
-                </div>
-
-                <div class="mb-4 max-h-60 overflow-y-auto border border-gray-200 rounded-lg">
-                    <ul class="divide-y divide-gray-200">
-                        <li v-if="patientSearchQuery && filteredPatients.length === 0" class="p-4 text-center text-gray-500">
-                            No patients found matching your search.
-                        </li>
-                        <li v-else-if="!patientSearchQuery" class="p-4 text-center text-gray-500">
-                            Start typing to search for patients.
-                        </li>
-                        <li v-for="patient in filteredPatients" :key="patient.id"
-                            @click="selectedPatientIdInternal = patient.id"
-                            class="p-4 cursor-pointer hover:bg-teal-50 flex justify-between items-center group"
-                            :class="{ 'bg-teal-100 font-semibold': selectedPatientIdInternal === patient.id }"
+                    <h4 class="text-lg font-semibold text-teal-800">Selected {{ displayLabel }}</h4>
+                    <div class="flex space-x-2">
+                        <button
+                            @click="openEditModal(getSelectedPatientDetails.id)"
+                            class="p-2 text-blue-600 hover:bg-blue-50 rounded-full"
+                            title="Edit patient"
                         >
-                            <div class="flex-grow">
-                                <p class="text-gray-900">{{ patient.Firstname }} {{ patient.Lastname }}</p>
-                                <p class="text-sm text-gray-600">
-                                    ID: {{ patient.Idnum || '-' }} | Phone: {{ patient.phone || '-' }} | NSS: {{ patient.nss || '-' }}
-                                </p>
-                            </div>
-                            <div class="flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button
-                                    @click.stop="openEditModal(patient.id)"
-                                    type="button"
-                                    class="p-1 rounded-full text-blue-500 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    title="Edit Patient"
-                                >
-                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
-                                </button>
-                                <svg v-if="selectedPatientIdInternal === patient.id" class="w-5 h-5 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-                                </svg>
-                            </div>
-                        </li>
-                    </ul>
-                    <div v-if="filteredPatients.length === 5 && patientSearchQuery" class="px-4 py-2 text-xs text-gray-400 bg-gray-50 border-t border-gray-100">
-                        Showing top 5 results. Refine search to see more.
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                                    d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z">
+                                </path>
+                            </svg>
+                        </button>
+                        <button
+                            @click="clearSelection"
+                            class="p-2 text-red-600 hover:bg-red-50 rounded-full"
+                            title="Clear selection"
+                        >
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                                    d="M6 18L18 6M6 6l12 12">
+                                </path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="grid grid-cols-2 gap-4 mt-3">
+                    <div>
+                        <p class="text-sm text-gray-500">Full Name</p>
+                        <p class="font-medium text-gray-900">
+                            {{ getSelectedPatientDetails.Lastname }} {{ getSelectedPatientDetails.Firstname }}
+                        </p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-500">Phone</p>
+                        <p class="font-medium text-gray-900">{{ getSelectedPatientDetails.phone || '-' }}</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-500">ID Number</p>
+                        <p class="font-medium text-gray-900">{{ getSelectedPatientDetails.Idnum || '-' }}</p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-500">NSS</p>
+                        <p class="font-medium text-gray-900">{{ getSelectedPatientDetails.nss || '-' }}</p>
                     </div>
                 </div>
             </div>
 
+            <!-- Existing search input -->
+            <div class="mb-4" v-show="!getSelectedPatientDetails">
+                <label for="patientSearch" class="block text-sm font-semibold text-gray-700 mb-2">
+                    {{ getSelectedPatientDetails ? `Search for a different ${displayLabel.toLowerCase()}` : `Search or Select ${displayLabel}` }}
+                </label>
+                <input
+                    type="text"
+                    id="patientSearch"
+                    v-model="patientSearchQuery"
+                    :disabled="!!getSelectedPatientDetails" placeholder="Search by name, ID, phone, or NSS..."
+                    class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 transition-colors"
+                    :class="{ 'bg-gray-100 cursor-not-allowed': !!getSelectedPatientDetails }"
+                />
+            </div>
+
+            <div v-if="!getSelectedPatientDetails && (patientSearchQuery || filteredPatients.length > 0)"
+                 class="mb-4 max-h-60 overflow-y-auto border border-gray-200 rounded-lg">
+                <ul class="divide-y divide-gray-200">
+                    <li v-if="isSearchingPatients" class="p-4 text-center text-gray-500">
+                        Searching for patients...
+                    </li>
+                    <li v-else-if="patientSearchError" class="p-4 text-center text-red-600">
+                        {{ patientSearchError }}
+                    </li>
+                    <li v-else-if="patientSearchQuery && filteredPatients.length === 0" class="p-4 text-center text-gray-500">
+                        No patients found matching your search.
+                    </li>
+                    <li v-else-if="!patientSearchQuery && filteredPatients.length === 0" class="p-4 text-center text-gray-500">
+                        Start typing to search for patients.
+                    </li>
+                    <li v-for="patient in filteredPatients" :key="patient.id"
+                        @click="selectedPatientIdInternal = patient.id"
+                        class="p-4 cursor-pointer hover:bg-teal-50 flex justify-between items-center group"
+                        :class="{ 'bg-teal-100 font-semibold': selectedPatientIdInternal === patient.id }"
+                    >
+                        <div class="flex-grow">
+                            <p class="text-gray-900">{{ patient.Lastname }} {{ patient.Firstname }}</p>
+                            <p class="text-sm text-gray-600">
+                                ID: {{ patient.Idnum || '-' }} | Phone: {{ patient.phone || '-' }} | NSS: {{ patient.nss || '-' }}
+                            </p>
+                        </div>
+                        <div class="flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                                @click.stop="openEditModal(patient.id)"
+                                type="button"
+                                class="p-1 rounded-full text-blue-500 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                title="Edit Patient"
+                            >
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path>
+                                </svg>
+                            </button>
+                            <svg v-if="selectedPatientIdInternal === patient.id" class="w-5 h-5 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                            </svg>
+                        </div>
+                    </li>
+                </ul>
+                <div v-if="filteredPatients.length === 10 && patientSearchQuery && !isSearchingPatients" class="px-4 py-2 text-xs text-gray-400 bg-gray-50 border-t border-gray-100">
+                    Showing top 10 results. Refine search to see more.
+                </div>
+            </div>
+
+            <!-- Update the "Add New Patient" button text -->
             <button
                 type="button"
                 @click="showAddPatientModal = true"
@@ -346,63 +469,77 @@ const clearSelection = () => {
                 <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
                 </svg>
-                Add New Patient
+                Add New {{ displayLabel }}
             </button>
         </div>
 
-        <div v-if="showAddPatientModal" class="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center z-50 p-4">
-            <div class="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
-                <h3 class="text-xl font-bold text-gray-800 mb-6">Add New Patient</h3>
-                <form @submit.prevent="submitNewPatient" class="space-y-4">
-                    <div>
-                        <label for="newPatientFirstname" class="block text-sm font-semibold text-gray-700 mb-1">First Name</label>
-                        <input type="text" id="newPatientFirstname" v-model="newPatientForm.Firstname" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500" :class="{ 'border-red-500': newPatientForm.errors.Firstname }" required />
-                        <p v-if="newPatientForm.errors.Firstname" class="mt-1 text-sm text-red-600">{{ newPatientForm.errors.Firstname }}</p>
+        <!-- Update modal titles -->
+        <div v-if="showAddPatientModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+            <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-md mx-auto">
+                <h3 class="text-xl font-bold mb-4 text-gray-800">Add New {{ displayLabel }}</h3>
+                <form @submit.prevent="submitNewPatient">
+                    <div class="grid grid-cols-1 gap-4 mb-4">
+                        <div>
+                            <label for="new_Firstname" class="block text-sm font-medium text-gray-700">First Name</label>
+                            <input type="text" id="new_Firstname" v-model="newPatientForm.Firstname"
+                                class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" required />
+                            <div v-if="newPatientForm.errors.Firstname" class="text-red-600 text-sm mt-1">{{ newPatientForm.errors.Firstname }}</div>
+                        </div>
+                        <div>
+                            <label for="new_Lastname" class="block text-sm font-medium text-gray-700">Last Name</label>
+                            <input type="text" id="new_Lastname" v-model="newPatientForm.Lastname"
+                                class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" required />
+                            <div v-if="newPatientForm.errors.Lastname" class="text-red-600 text-sm mt-1">{{ newPatientForm.errors.Lastname }}</div>
+                        </div>
+                        <div>
+                            <label for="new_Parent" class="block text-sm font-medium text-gray-700">Parent (Optional)</label>
+                            <input type="text" id="new_Parent" v-model="newPatientForm.Parent"
+                                class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
+                            <div v-if="newPatientForm.errors.Parent" class="text-red-600 text-sm mt-1">{{ newPatientForm.errors.Parent }}</div>
+                        </div>
+                        <div>
+                            <label for="new_phone" class="block text-sm font-medium text-gray-700">Phone</label>
+                            <input type="text" id="new_phone" v-model="newPatientForm.phone"
+                                class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" required />
+                            <div v-if="newPatientForm.errors.phone" class="text-red-600 text-sm mt-1">{{ newPatientForm.errors.phone }}</div>
+                        </div>
+                        <div>
+                            <label for="new_dateOfBirth" class="block text-sm font-medium text-gray-700">Date of Birth</label>
+                            <input type="date" id="new_dateOfBirth" v-model="newPatientForm.dateOfBirth"
+                                class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
+                            <div v-if="newPatientForm.errors.dateOfBirth" class="text-red-600 text-sm mt-1">{{ newPatientForm.errors.dateOfBirth }}</div>
+                        </div>
+                        <div>
+                            <label for="new_gender" class="block text-sm font-medium text-gray-700">Gender</label>
+                            <select id="new_gender" v-model="newPatientForm.gender"
+                                class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2">
+                                <option value="">Select Gender</option>
+                                <option value="Male">Male</option>
+                                <option value="Female">Female</option>
+                                <option value="Other">Other</option>
+                            </select>
+                            <div v-if="newPatientForm.errors.gender" class="text-red-600 text-sm mt-1">{{ newPatientForm.errors.gender }}</div>
+                        </div>
+                        <div>
+                            <label for="new_Idnum" class="block text-sm font-medium text-gray-700">ID Number (Optional)</label>
+                            <input type="text" id="new_Idnum" v-model="newPatientForm.Idnum"
+                                class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
+                            <div v-if="newPatientForm.errors.Idnum" class="text-red-600 text-sm mt-1">{{ newPatientForm.errors.Idnum }}</div>
+                        </div>
+                        <div>
+                            <label for="new_nss" class="block text-sm font-medium text-gray-700">NSS (Optional)</label>
+                            <input type="text" id="new_nss" v-model="newPatientForm.nss"
+                                class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
+                            <div v-if="newPatientForm.errors.nss" class="text-red-600 text-sm mt-1">{{ newPatientForm.errors.nss }}</div>
+                        </div>
                     </div>
-                    <div>
-                        <label for="newPatientLastname" class="block text-sm font-semibold text-gray-700 mb-1">Last Name</label>
-                        <input type="text" id="newPatientLastname" v-model="newPatientForm.Lastname" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500" :class="{ 'border-red-500': newPatientForm.errors.Lastname }" required />
-                        <p v-if="newPatientForm.errors.Lastname" class="mt-1 text-sm text-red-600">{{ newPatientForm.errors.Lastname }}</p>
-                    </div>
-                    <div>
-                        <label for="newPatientParent" class="block text-sm font-semibold text-gray-700 mb-1">Parent (Optional)</label>
-                        <input type="text" id="newPatientParent" v-model="newPatientForm.Parent" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500" :class="{ 'border-red-500': newPatientForm.errors.Parent }" />
-                        <p v-if="newPatientForm.errors.Parent" class="mt-1 text-sm text-red-600">{{ newPatientForm.errors.Parent }}</p>
-                    </div>
-                    <div>
-                        <label for="newPatientPhone" class="block text-sm font-semibold text-gray-700 mb-1">Phone (Optional)</label>
-                        <input type="text" id="newPatientPhone" v-model="newPatientForm.phone" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500" :class="{ 'border-red-500': newPatientForm.errors.phone }" />
-                        <p v-if="newPatientForm.errors.phone" class="mt-1 text-sm text-red-600">{{ newPatientForm.errors.phone }}</p>
-                    </div>
-                    <div>
-                        <label for="newPatientDob" class="block text-sm font-semibold text-gray-700 mb-1">Date of Birth</label>
-                        <input type="date" id="newPatientDob" v-model="newPatientForm.dateOfBirth" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500" :class="{ 'border-red-500': newPatientForm.errors.dateOfBirth }" required />
-                        <p v-if="newPatientForm.errors.dateOfBirth" class="mt-1 text-sm text-red-600">{{ newPatientForm.errors.dateOfBirth }}</p>
-                    </div>
-                    <div>
-                        <label for="newPatientGender" class="block text-sm font-semibold text-gray-700 mb-1">Gender (Optional)</label>
-                        <select id="newPatientGender" v-model="newPatientForm.gender" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500" :class="{ 'border-red-500': newPatientForm.errors.gender }">
-                            <option value="">-- Select Gender --</option>
-                            <option value="male">Male</option>
-                            <option value="female">Female</option>
-                        </select>
-                        <p v-if="newPatientForm.errors.gender" class="mt-1 text-sm text-red-600">{{ newPatientForm.errors.gender }}</p>
-                    </div>
-                    <div>
-                        <label for="newPatientIdnum" class="block text-sm font-semibold text-gray-700 mb-1">ID Number (CIN/Passport - Optional)</label>
-                        <input type="text" id="newPatientIdnum" v-model="newPatientForm.Idnum" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500" :class="{ 'border-red-500': newPatientForm.errors.Idnum }" />
-                        <p v-if="newPatientForm.errors.Idnum" class="mt-1 text-sm text-red-600">{{ newPatientForm.errors.Idnum }}</p>
-                    </div>
-                    <div>
-                        <label for="newPatientNss" class="block text-sm font-semibold text-gray-700 mb-1">NSS (Social Security Number - Optional)</label>
-                        <input type="text" id="newPatientNss" v-model="newPatientForm.nss" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500" :class="{ 'border-red-500': newPatientForm.errors.nss }" />
-                        <p v-if="newPatientForm.errors.nss" class="mt-1 text-sm text-red-600">{{ newPatientForm.errors.nss }}</p>
-                    </div>
-                    <div class="flex justify-end space-x-3 mt-6">
-                        <button type="button" @click="showAddPatientModal = false; newPatientForm.reset();" class="px-5 py-2 bg-gray-200 text-gray-700 rounded-lg font-semibold hover:bg-gray-300 transition-colors">
-                            Cancel
-                        </button>
-                        <button type="submit" class="px-5 py-2 bg-gradient-to-r from-teal-500 to-green-600 text-white rounded-lg font-semibold hover:from-teal-600 hover:to-green-700 transition-colors" :disabled="newPatientForm.processing">
+
+                    <div class="flex justify-end space-x-3">
+                        <button type="button" @click="showAddPatientModal = false"
+                            class="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300">Cancel</button>
+                        <button type="submit"
+                            class="px-4 py-2 bg-teal-600 text-white rounded-md hover:bg-teal-700"
+                            :disabled="newPatientForm.processing">
                             {{ newPatientForm.processing ? 'Adding...' : 'Add Patient' }}
                         </button>
                     </div>
@@ -410,60 +547,73 @@ const clearSelection = () => {
             </div>
         </div>
 
-        <div v-if="showEditPatientModal" class="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center z-50 p-4">
-            <div class="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
-                <h3 class="text-xl font-bold text-gray-800 mb-6">Edit Patient</h3>
-                <form @submit.prevent="submitEditPatient" class="space-y-4">
-                    <div>
-                        <label for="editPatientFirstname" class="block text-sm font-semibold text-gray-700 mb-1">First Name</label>
-                        <input type="text" id="editPatientFirstname" v-model="editPatientForm.Firstname" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500" :class="{ 'border-red-500': editPatientForm.errors.Firstname }" required />
-                        <p v-if="editPatientForm.errors.Firstname" class="mt-1 text-sm text-red-600">{{ editPatientForm.errors.Firstname }}</p>
+        <div v-if="showEditPatientModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+            <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-md mx-auto">
+                <h3 class="text-xl font-bold mb-4 text-gray-800">Edit {{ displayLabel }}</h3>
+                <form @submit.prevent="submitEditPatient">
+                    <div class="grid grid-cols-1 gap-4 mb-4">
+                        <div>
+                            <label for="edit_Firstname" class="block text-sm font-medium text-gray-700">First Name</label>
+                            <input type="text" id="edit_Firstname" v-model="editPatientForm.Firstname"
+                                class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" required />
+                            <div v-if="editPatientForm.errors.Firstname" class="text-red-600 text-sm mt-1">{{ editPatientForm.errors.Firstname }}</div>
+                        </div>
+                        <div>
+                            <label for="edit_Lastname" class="block text-sm font-medium text-gray-700">Last Name</label>
+                            <input type="text" id="edit_Lastname" v-model="editPatientForm.Lastname"
+                                class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" required />
+                            <div v-if="editPatientForm.errors.Lastname" class="text-red-600 text-sm mt-1">{{ editPatientForm.errors.Lastname }}</div>
+                        </div>
+                        <div>
+                            <label for="edit_Parent" class="block text-sm font-medium text-gray-700">Parent (Optional)</label>
+                            <input type="text" id="edit_Parent" v-model="editPatientForm.Parent"
+                                class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
+                            <div v-if="editPatientForm.errors.Parent" class="text-red-600 text-sm mt-1">{{ editPatientForm.errors.Parent }}</div>
+                        </div>
+                        <div>
+                            <label for="edit_phone" class="block text-sm font-medium text-gray-700">Phone</label>
+                            <input type="text" id="edit_phone" v-model="editPatientForm.phone"
+                                class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" required />
+                            <div v-if="editPatientForm.errors.phone" class="text-red-600 text-sm mt-1">{{ editPatientForm.errors.phone }}</div>
+                        </div>
+                        <div>
+                            <label for="edit_dateOfBirth" class="block text-sm font-medium text-gray-700">Date of Birth</label>
+                            <input type="date" id="edit_dateOfBirth" v-model="editPatientForm.dateOfBirth"
+                                class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
+                            <div v-if="editPatientForm.errors.dateOfBirth" class="text-red-600 text-sm mt-1">{{ editPatientForm.errors.dateOfBirth }}</div>
+                        </div>
+                        <div>
+                            <label for="edit_gender" class="block text-sm font-medium text-gray-700">Gender</label>
+                            <select id="edit_gender" v-model="editPatientForm.gender"
+                                class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2">
+                                <option value="">Select Gender</option>
+                                <option value="Male">Male</option>
+                                <option value="Female">Female</option>
+                                <option value="Other">Other</option>
+                            </select>
+                            <div v-if="editPatientForm.errors.gender" class="text-red-600 text-sm mt-1">{{ editPatientForm.errors.gender }}</div>
+                        </div>
+                        <div>
+                            <label for="edit_Idnum" class="block text-sm font-medium text-gray-700">ID Number (Optional)</label>
+                            <input type="text" id="edit_Idnum" v-model="editPatientForm.Idnum"
+                                class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
+                            <div v-if="editPatientForm.errors.Idnum" class="text-red-600 text-sm mt-1">{{ editPatientForm.errors.Idnum }}</div>
+                        </div>
+                        <div>
+                            <label for="edit_nss" class="block text-sm font-medium text-gray-700">NSS (Optional)</label>
+                            <input type="text" id="edit_nss" v-model="editPatientForm.nss"
+                                class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
+                            <div v-if="editPatientForm.errors.nss" class="text-red-600 text-sm mt-1">{{ editPatientForm.errors.nss }}</div>
+                        </div>
                     </div>
-                    <div>
-                        <label for="editPatientLastname" class="block text-sm font-semibold text-gray-700 mb-1">Last Name</label>
-                        <input type="text" id="editPatientLastname" v-model="editPatientForm.Lastname" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500" :class="{ 'border-red-500': editPatientForm.errors.Lastname }" required />
-                        <p v-if="editPatientForm.errors.Lastname" class="mt-1 text-sm text-red-600">{{ editPatientForm.errors.Lastname }}</p>
-                    </div>
-                    <div>
-                        <label for="editPatientParent" class="block text-sm font-semibold text-gray-700 mb-1">Parent (Optional)</label>
-                        <input type="text" id="editPatientParent" v-model="editPatientForm.Parent" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500" :class="{ 'border-red-500': editPatientForm.errors.Parent }" />
-                        <p v-if="editPatientForm.errors.Parent" class="mt-1 text-sm text-red-600">{{ editPatientForm.errors.Parent }}</p>
-                    </div>
-                    <div>
-                        <label for="editPatientPhone" class="block text-sm font-semibold text-gray-700 mb-1">Phone (Optional)</label>
-                        <input type="text" id="editPatientPhone" v-model="editPatientForm.phone" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500" :class="{ 'border-red-500': editPatientForm.errors.phone }" />
-                        <p v-if="editPatientForm.errors.phone" class="mt-1 text-sm text-red-600">{{ editPatientForm.errors.phone }}</p>
-                    </div>
-                    <div>
-                        <label for="editPatientDob" class="block text-sm font-semibold text-gray-700 mb-1">Date of Birth</label>
-                        <input type="date" id="editPatientDob" v-model="editPatientForm.dateOfBirth" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500" :class="{ 'border-red-500': editPatientForm.errors.dateOfBirth }" required />
-                        <p v-if="editPatientForm.errors.dateOfBirth" class="mt-1 text-sm text-red-600">{{ editPatientForm.errors.dateOfBirth }}</p>
-                    </div>
-                    <div>
-                        <label for="editPatientGender" class="block text-sm font-semibold text-gray-700 mb-1">Gender (Optional)</label>
-                        <select id="editPatientGender" v-model="editPatientForm.gender" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500" :class="{ 'border-red-500': editPatientForm.errors.gender }">
-                            <option value="">-- Select Gender --</option>
-                            <option value="male">Male</option>
-                            <option value="female">Female</option>
-                        </select>
-                        <p v-if="editPatientForm.errors.gender" class="mt-1 text-sm text-red-600">{{ editPatientForm.errors.gender }}</p>
-                    </div>
-                    <div>
-                        <label for="editPatientIdnum" class="block text-sm font-semibold text-gray-700 mb-1">ID Number (CIN/Passport - Optional)</label>
-                        <input type="text" id="editPatientIdnum" v-model="editPatientForm.Idnum" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500" :class="{ 'border-red-500': editPatientForm.errors.Idnum }" />
-                        <p v-if="editPatientForm.errors.Idnum" class="mt-1 text-sm text-red-600">{{ editPatientForm.errors.Idnum }}</p>
-                    </div>
-                    <div>
-                        <label for="editPatientNss" class="block text-sm font-semibold text-gray-700 mb-1">NSS (Social Security Number - Optional)</label>
-                        <input type="text" id="editPatientNss" v-model="editPatientForm.nss" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500" :class="{ 'border-red-500': editPatientForm.errors.nss }" />
-                        <p v-if="editPatientForm.errors.nss" class="mt-1 text-sm text-red-600">{{ editPatientForm.errors.nss }}</p>
-                    </div>
-                    <div class="flex justify-end space-x-3 mt-6">
-                        <button type="button" @click="showEditPatientModal = false; editingPatientId = null; editPatientForm.reset();" class="px-5 py-2 bg-gray-200 text-gray-700 rounded-lg font-semibold hover:bg-gray-300 transition-colors">
-                            Cancel
-                        </button>
-                        <button type="submit" class="px-5 py-2 bg-gradient-to-r from-teal-500 to-green-600 text-white rounded-lg font-semibold hover:from-teal-600 hover:to-green-700 transition-colors" :disabled="editPatientForm.processing">
-                            {{ editPatientForm.processing ? 'Saving...' : 'Save Changes' }}
+
+                    <div class="flex justify-end space-x-3">
+                        <button type="button" @click="showEditPatientModal = false; editingPatientId = null"
+                            class="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300">Cancel</button>
+                        <button type="submit"
+                            class="px-4 py-2 bg-teal-600 text-white rounded-md hover:bg-teal-700"
+                            :disabled="editPatientForm.processing">
+                            {{ editPatientForm.processing ? 'Updating...' : 'Update Patient' }}
                         </button>
                     </div>
                 </form>

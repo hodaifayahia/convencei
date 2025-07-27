@@ -3,53 +3,97 @@
 namespace App\Http\Controllers;
 
 use App\Models\Service;
-use App\Models\Company; // Import Company model
-use App\Models\Patient; // Import Company model
-use App\Models\Convention; // Import Company model
+use App\Models\Company;
+use App\Models\Patient;
+use App\Models\Convention;
+use App\Models\FicheNavette;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
-use Illuminate\Validation\Rule;
-use App\Models\FicheNavette;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
-
 
 class ServiceController extends Controller
 {
     /**
      * Display a listing of the services.
      */
-   
-public function index(Request $request)
-{
-    $selectedCompany = null;
-    $services = Service::query();
-    $conventions = Convention::query(); // Start convention query
-        $nextFNnumber = $this->getNextFNnumber();
+  public function index(Request $request)
+    {
+        $companyId = $request->query('company_id');
+        $serviceId = $request->query('service_id');
+        $perPage = $request->get('perPage', 15);
+        $search = $request->get('search', '');
 
-    if ($request->has('company_id')) {
-        $selectedCompany = Company::find($request->input('company_id'));
-        if ($selectedCompany) {
-            $services->where('company_id', $selectedCompany->id);
-            $conventions->where('company_id', $selectedCompany->id); // Filter conventions by company
+        $conventionsQuery = Convention::query()
+            ->with(['service', 'company']); // Eager load relationships
+
+        // Apply filters
+        if ($companyId) {
+            $conventionsQuery->where('company_id', $companyId);
         }
-    }
-$allPatients = Patient::all(); // This is where the API/DB call happens on the backend
-    // Eager load relationships for display
-    $services = $services->with('company')->get();
-    $conventions = $conventions->with(['service', 'company'])->get(); // Eager load service and company for conventions
+        if ($serviceId) {
+            $conventionsQuery->where('service_id', $serviceId);
+        }
 
-    return Inertia::render('Services/Index', [
-        'services' => $services,
-         'allPatients' => $allPatients, // Pass all patients for the dropdown
-        'selectedCompany' => $selectedCompany,
-        'nextFNnumber' => $nextFNnumber, // Pass the next FN
-        'allCompanies' => Company::all(), // Ensure all companies are passed for the select input
-        'conventions' => $conventions, // Pass the filtered conventions
-        'flash' => session('flash') // Make sure flash messages are passed
-    ]);
-}
-  private function getNextFNnumber(): string
+        // Add search functionality for conventions
+        if ($search) {
+            $conventionsQuery->where(function($query) use ($search) {
+                $query->where('code', 'like', "%{$search}%")
+                    ->orWhere('designation_prestation', 'like', "%{$search}%")
+                    ->orWhereHas('company', function($q) use ($search) {
+                        $q->where('name', 'like', "%{$search}%");
+                    })
+                    ->orWhereHas('service', function($q) use ($search) {
+                        $q->where('name', 'like', "%{$search}%");
+                    });
+            });
+        }
+
+        $conventions = $conventionsQuery
+            ->orderBy('created_at', 'desc')
+            ->paginate($perPage)
+            ->withQueryString(); // Preserve query parameters in pagination links
+
+        // Fetch all services, potentially filtered by company if `company_id` is present,
+        // otherwise fetch all for the general service list.
+        $servicesQuery = Service::query()->orderBy('name');
+        if ($companyId) {
+            $servicesQuery->where('company_id', $companyId);
+        }
+        $services = $servicesQuery->get(['id', 'name', 'company_id']);
+
+
+        $allCompanies = Company::orderBy('name')->get(['id', 'name', 'abbreviation']); // Added abbreviation for CompanyCard
+
+        // Optimize patient loading: only load if specifically needed for a feature,
+        // or consider lazy loading in the frontend if the list is very large.
+        // Limiting to 100 for display might be fine, but confirm actual usage.
+
+        $nextFNnumber = $this->getNextFNnumber();
+        // dd($nextFNnumber);
+        // Fetch selected items for context.
+        // Corrected the `selectedService` fetch logic.
+        $selectedService = $serviceId ? Service::find($serviceId) : null;
+        $selectedCompany = $companyId ? Company::find($companyId) : null;
+
+        return Inertia::render('Services/Index', [
+            'conventions' => $conventions,
+            'services' => $services, // Pass the services that are filtered by selected company (or all)
+            'allCompanies' => $allCompanies,
+            'nextFNnumber' => $nextFNnumber,
+            'selectedService' => $selectedService,
+            'selectedCompany' => $selectedCompany,
+            'filters' => [
+                'search' => $search,
+                'perPage' => (int)$perPage,
+                'company_id' => $companyId ? (int)$companyId : null,
+                'service_id' => $serviceId ? (int)$serviceId : null,
+            ],
+            'flash' => session('flash')
+        ]);
+    }
+    private function getNextFNnumber(): string
     {
         $currentYear = Carbon::now()->year;
 
@@ -67,9 +111,8 @@ $allPatients = Patient::all(); // This is where the API/DB call happens on the b
         }
         return "{$nextNumber}/{$currentYear}";
     }
-    /**
-     * Store a newly created service in storage.
-     */
+
+    // ... (store, update, destroy methods remain the same) ...
     public function store(Request $request)
     {
         $request->validate([
@@ -82,14 +125,10 @@ $allPatients = Patient::all(); // This is where the API/DB call happens on the b
             'company_id' => $request->company_id,
         ]);
 
-        // Redirect back with the company_id to maintain the filter
         return redirect()->route('services.index', ['company_id' => $request->company_id])
                          ->with('success', 'Service created successfully!');
     }
 
-    /**
-     * Update the specified service in storage.
-     */
     public function update(Request $request, Service $service)
     {
         $request->validate([
@@ -102,21 +141,16 @@ $allPatients = Patient::all(); // This is where the API/DB call happens on the b
             'company_id' => $request->company_id,
         ]);
 
-        // Redirect back with the company_id to maintain the filter
         return redirect()->route('services.index', ['company_id' => $request->company_id])
                          ->with('success', 'Service updated successfully!');
     }
 
-    /**
-     * Remove the specified service from storage.
-     */
     public function destroy(Service $service)
     {
-        $companyId = $service->company_id; // Get company_id before deleting for redirect
+        $companyId = $service->company_id;
 
         $service->delete();
 
-        // Redirect back with the company_id to maintain the filter
         return redirect()->route('services.index', ['company_id' => $companyId])
                          ->with('success', 'Service deleted successfully!');
     }

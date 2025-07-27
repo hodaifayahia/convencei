@@ -23,49 +23,96 @@ class ConventionController extends Controller
     /**
      * Display a listing of the conventions.
      */
-    public function index(Request $request)
+   public function index(Request $request)
     {
+        // Get filters from the request, provide defaults
         $companyId = $request->query('company_id');
         $serviceId = $request->query('service_id');
+        $perPage = $request->get('perPage', 15); // Default 15 items per page
+        $search = $request->get('search', '');
 
         $conventionsQuery = Convention::query()
-            ->with(['service', 'company']); // Eager load relationships for display
+            ->with(['service', 'company']); // Eager load relationships
 
+        // Apply filters
         if ($companyId) {
             $conventionsQuery->where('company_id', $companyId);
         }
         if ($serviceId) {
             $conventionsQuery->where('service_id', $serviceId);
         }
-$allPatients = Patient::all(); // This is where the API/DB call happens on the backend
-        $conventions = $conventionsQuery->orderBy('created_at', 'desc')->get();
 
-        // Fetch all services and companies for dropdowns in the form
+        // Apply search
+        $conventionsQuery = $this->buildSearchQuery($conventionsQuery, $search);
+
+        // Use pagination instead of get()
+        $conventions = $conventionsQuery
+            ->orderBy('created_at', 'desc')
+            ->paginate($perPage)
+            ->withQueryString(); // Preserve query parameters in pagination links
+
+        // Only load dropdown data when needed
+        // Assuming 'Company' and 'Service' are for filter dropdowns that need all options
         $allServices = Service::orderBy('name')->get(['id', 'name']);
         $allCompanies = Company::orderBy('name')->get(['id', 'name']);
+        
+        // Optimize patient loading - only load first 100 or use lazy loading (if used in dropdown directly)
+        // If 'allPatients' is for a search/select input, consider an API endpoint for dynamic loading
+        $allPatients = Patient::limit(50)->get();
+
         $nextFNnumber = $this->getNextFNnumber();
 
-        // Fetch selected service and company to display context and pre-fill form
+        // Fetch selected company and service for initial state of filters
         $selectedService = $serviceId ? Service::find($serviceId) : null;
         $selectedCompany = $companyId ? Company::find($companyId) : null;
 
-        return Inertia::render('Convention/Index', [
-            'conventions' => $conventions,
+        return Inertia::render('Convention/Index', [ // Ensure this matches your actual page path
+            'conventions' => $conventions, // This now includes pagination data
             'allServices' => $allServices,
             'allCompanies' => $allCompanies,
-            'nextFNnumber' => $nextFNnumber, // Pass the next FN number
-            'selectedService' => $selectedService,
-            'selectedCompany' => $selectedCompany,
-            'companyId' => $companyId,
-            'serviceId' => $serviceId,
-            'allPatients' => $allPatients, // Pass all patients for the dropdown
+            'nextFNnumber' => $nextFNnumber,
+            'selectedService' => $selectedService, // Pass selected service object if needed for display
+            'selectedCompany' => $selectedCompany, // Pass selected company object if needed for display
+            'allPatients' => $allPatients,
+            'filters' => [ // Pass the current active filters back to the frontend
+                'search' => $search,
+                'perPage' => (int)$perPage, // Cast to int to ensure type consistency
+                'company_id' => $companyId ? (int)$companyId : null, // Pass ID back
+                'service_id' => $serviceId ? (int)$serviceId : null, // Pass ID back
+            ],
+            // You might want to pass 'flash' messages here if you use them for CRUD operations
+            // 'flash' => session('flash') 
         ]);
     }
-      private function getNextFNnumber(): string
+
+    /**
+     * Builds the search query for conventions.
+     *
+     * @param  \Illuminate\Database\Eloquent\Builder  $query
+     * @param  string  $search
+     * @return \Illuminate\Database\Eloquent\Builder
+     */
+    private function buildSearchQuery($query, $search)
+    {
+        if ($search) {
+            $query->where(function($q) use ($search) {
+                $q->where('code', 'like', "%{$search}%")
+                  ->orWhere('designation_prestation', 'like', "%{$search}%")
+                  ->orWhereHas('company', function($q2) use ($search) {
+                      $q2->where('name', 'like', "%{$search}%");
+                  })
+                  ->orWhereHas('service', function($q3) use ($search) {
+                      $q3->where('name', 'like', "%{$search}%");
+                  });
+            });
+        }
+
+        return $query;
+    }
+    private function getNextFNnumber(): string
     {
         $currentYear = Carbon::now()->year;
 
-        // Find the latest FNnumber for the current year
         $lastFicheNavette = FicheNavette::where('FNnumber', 'like', "%/{$currentYear}")
                                         ->orderBy(DB::raw("CAST(SUBSTRING_INDEX(FNnumber, '/', 1) AS UNSIGNED)"), 'desc')
                                         ->first();
@@ -80,6 +127,9 @@ $allPatients = Patient::all(); // This is where the API/DB call happens on the b
         return "{$nextNumber}/{$currentYear}";
     }
 
+
+
+   
     /**
      * Store a newly created convention in storage.
      */

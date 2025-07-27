@@ -24,7 +24,7 @@ const emit = defineEmits(['ficheNavetteCreated', 'editFicheNavette', 'clearAllSe
 
 const showFicheNavetteModal = ref(false);
 const patientId = ref(null);
-const isSelfSelected = ref(true);
+const isSelfSelected = ref(true); // Default to patient being the adherent
 const createdFicheNavette = ref(null);
 
 const toast = useToast();
@@ -33,7 +33,7 @@ const familyAuthOptions = [
     { label: "Ascendant", value: "ascendant" },
     { label: "Descendant", value: "descendant" },
     { label: "Conjoint", value: "conjoint" },
-    { label: "Adherent", value: "adherent" },
+    { label: "Adherent", value: "adherent" }, // 'Adherent' will be auto-selected when isSelfSelected is true
     { label: "Autre", value: "autre" }
 ];
 
@@ -41,9 +41,6 @@ const ficheNavetteForm = useForm({
     patient_id: null,
     convention_ids: [],
     fiche_date: new Date().toISOString().slice(0, 10),
-    first_name_beneficiary: '',
-    last_name_beneficiary: '',
-    phone_beneficiary: '',
     prise_en_charge_number: '',
     number_mutuelle: '',
     family_auth: null,
@@ -52,9 +49,11 @@ const ficheNavetteForm = useForm({
     patient_share: 0,
     organisme_share: 0,
     status: 'pending',
-    FNnumber: '', // Add FNnumber to the form data
+    FNnumber: '',
+    insured_id: null, // New field for the selected insured person
 });
 
+// Watch for changes in selected conventions to update prices
 watch(() => props.selectedConventions, (newConventions) => {
     ficheNavetteForm.convention_ids = newConventions.map(conv => conv.id);
 
@@ -77,38 +76,47 @@ watch(() => props.selectedConventions, (newConventions) => {
 
 }, { immediate: true });
 
+// Watch for changes in the main patient selection
 watch(patientId, (newId) => {
     ficheNavetteForm.patient_id = newId;
+    // If the patient is self-selected (adherent), set insured_id to the same patient
     if (newId && isSelfSelected.value) {
         ficheNavetteForm.family_auth = 'adherent';
+        ficheNavetteForm.insured_id = newId;
+    }
+    // If not self-selected, ensure insured_id is null initially
+    if (newId && !isSelfSelected.value) {
+        ficheNavetteForm.insured_id = null;
     }
 });
 
+// Watch for changes in the "isSelfSelected" checkbox
 watch(isSelfSelected, (newVal) => {
     if (newVal) {
+        // If self-selected, patient is the adherent and also the insured person
         ficheNavetteForm.family_auth = 'adherent';
-        ficheNavetteForm.first_name_beneficiary = '';
-        ficheNavetteForm.last_name_beneficiary = '';
-        ficheNavetteForm.phone_beneficiary = '';
+        ficheNavetteForm.insured_id = patientId.value; // Insured person is the selected patient
     } else {
+        // If not self-selected, reset family_auth and insured_id for user input
         ficheNavetteForm.family_auth = null;
+        ficheNavetteForm.insured_id = null; // Clear insured person selection
     }
 });
 
+// Computed property to determine if the Fiche Navette can be created
 const canCreateFicheNavette = computed(() => {
-    const hasRequiredFields = patientId.value !== null &&
-                               ficheNavetteForm.convention_ids.length > 0 &&
-                               ficheNavetteForm.family_auth &&
-                               !ficheNavetteForm.processing;
+    const hasBaseRequiredFields = patientId.value !== null &&
+                                  ficheNavetteForm.convention_ids.length > 0 &&
+                                  ficheNavetteForm.family_auth &&
+                                  !ficheNavetteForm.processing;
 
     if (!isSelfSelected.value) {
-        return hasRequiredFields &&
-               ficheNavetteForm.first_name_beneficiary.trim() !== '' &&
-               ficheNavetteForm.last_name_beneficiary.trim() !== '' &&
-               ficheNavetteForm.phone_beneficiary.trim() !== '';
+        // If not self-selected, an insured person must also be selected
+        return hasBaseRequiredFields && ficheNavetteForm.insured_id !== null;
     }
 
-    return hasRequiredFields;
+    // If self-selected, only the base required fields are needed
+    return hasBaseRequiredFields;
 });
 
 const openFicheNavetteModal = () => {
@@ -119,11 +127,13 @@ const openFicheNavetteModal = () => {
 
     ficheNavetteForm.reset();
     patientId.value = null;
-    isSelfSelected.value = true;
+    isSelfSelected.value = true; // Always default to true when opening
     createdFicheNavette.value = null;
 
     ficheNavetteForm.convention_ids = props.selectedConventions.map(conv => conv.id);
     ficheNavetteForm.FNnumber = props.nextFNnumber; // Set the FNnumber from the prop when opening the modal
+    // The watches for patientId and isSelfSelected will correctly set ficheNavetteForm.patient_id,
+    // ficheNavetteForm.family_auth, and ficheNavetteForm.insured_id after these lines.
 
     showFicheNavetteModal.value = true;
 };
@@ -132,7 +142,7 @@ const closeFicheNavetteModal = () => {
     showFicheNavetteModal.value = false;
     ficheNavetteForm.reset();
     patientId.value = null;
-    isSelfSelected.value = false;
+    isSelfSelected.value = false; // Reset to false for next open to re-evaluate
     createdFicheNavette.value = null;
     emit('clearAllSelections');
 };
@@ -140,8 +150,8 @@ const closeFicheNavetteModal = () => {
 const submitFicheNavette = () => {
     if (!canCreateFicheNavette.value) {
         let message = 'Please select a patient, fill in all required fields, and select at least one convention to create a Fiche Navette.';
-        if (!isSelfSelected.value) {
-            message += ' Beneficiary details are required when not selecting yourself.';
+        if (!isSelfSelected.value && ficheNavetteForm.insured_id === null) {
+            message += ' An insured person must be selected when the patient is not the adherent.';
         }
         if (ficheNavetteForm.convention_ids.length === 0) {
             message += ' No conventions are selected. Please select at least one convention.';
@@ -169,13 +179,11 @@ const submitFicheNavette = () => {
             let errorMessage = 'Failed to create Fiche Navette. Please check the form.';
             if (errors.patient_id) errorMessage += ` Patient error: ${errors.patient_id}`;
             if (errors.convention_ids) errorMessage += ` Conventions error: ${errors.convention_ids}`;
-            if (errors.first_name_beneficiary) errorMessage += ` First name error: ${errors.first_name_beneficiary}`;
-            if (errors.last_name_beneficiary) errorMessage += ` Last name error: ${errors.last_name_beneficiary}`;
-            if (errors.phone_beneficiary) errorMessage += ` Phone error: ${errors.phone_beneficiary}`;
             if (errors.prise_en_charge_number) errorMessage += ` Prise en charge error: ${errors.prise_en_charge_number}`;
             if (errors.number_mutuelle) errorMessage += ` Mutuelle number error: ${errors.number_mutuelle}`;
             if (errors.family_auth) errorMessage += ` Family Authorization error: ${errors.family_auth}`;
-            if (errors.FNnumber) errorMessage += ` FNNumber error: ${errors.FNnumber}`; // Add FNnumber error handling
+            if (errors.FNnumber) errorMessage += ` FNNumber error: ${errors.FNnumber}`;
+            if (errors.insured_id) errorMessage += ` Insured Person error: ${errors.insured_id}`; // New error handling
             toast.error(errorMessage);
         },
     });
@@ -183,6 +191,12 @@ const submitFicheNavette = () => {
 
 const handlePatientAdded = () => {
     console.log('Patient added via selector, main page will re-render with updated patient list.');
+    // Note: This handler is general for any PatientSelector,
+    // so it will be called for both the main patient and insured person selector if needed.
+};
+const handleinsuredAdded = () => {
+    console.log('Insured person added via selector, main page will re-render with updated patient list.');
+    // This handler is specifically for the insured person selector.
 };
 
 const handlePrintAndClose = () => {
@@ -243,6 +257,7 @@ const handleEditNewlyCreated = () => {
                     v-model="patientId"
                     :allPatients="allPatients"
                     @patientAdded="handlePatientAdded"
+                    label="Select Patient *"
                 />
 
                 <div class="space-y-3">
@@ -301,48 +316,19 @@ const handleEditNewlyCreated = () => {
                         />
                         <label for="isSelfSelected" class="ml-2 text-sm text-gray-700">
                             Patient is the Adherent (myself)
-                            <span v-if="!patientId" class="text-gray-500 text-xs">(Select patient first)</span>
+                            <span v-if="!patientId" class="text-gray-500 text-xs">(Select patient first to enable)</span>
                         </label>
                     </div>
-                    <div v-if="!isSelfSelected" class="space-y-3 p-3 bg-gray-50 rounded-md">
-                        <h4 class="text-sm font-semibold text-gray-700 mb-2">insured person Details</h4>
 
-                        <div>
-                            <label for="first_name_beneficiary" class="block text-sm font-medium text-gray-700 mb-1">First Name *</label>
-                            <input
-                                type="text"
-                                id="first_name_beneficiary"
-                                v-model="ficheNavetteForm.first_name_beneficiary"
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-                                :class="{ 'border-red-500 ring-red-500': ficheNavetteForm.errors.first_name_beneficiary }"
-                                required
-                            />
-                            <p v-if="ficheNavetteForm.errors.first_name_beneficiary" class="mt-1 text-sm text-red-600">{{ ficheNavetteForm.errors.first_name_beneficiary }}</p>
-                        </div>
-                        <div>
-                            <label for="last_name_beneficiary" class="block text-sm font-medium text-gray-700 mb-1">Last Name *</label>
-                            <input
-                                type="text"
-                                id="last_name_beneficiary"
-                                v-model="ficheNavetteForm.last_name_beneficiary"
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-                                :class="{ 'border-red-500 ring-red-500': ficheNavetteForm.errors.last_name_beneficiary }"
-                                required
-                            />
-                            <p v-if="ficheNavetteForm.errors.last_name_beneficiary" class="mt-1 text-sm text-red-600">{{ ficheNavetteForm.errors.last_name_beneficiary }}</p>
-                        </div>
-                        <div>
-                            <label for="phone_beneficiary" class="block text-sm font-medium text-gray-700 mb-1">Phone Number *</label>
-                            <input
-                                type="tel"
-                                id="phone_beneficiary"
-                                v-model="ficheNavetteForm.phone_beneficiary"
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-                                :class="{ 'border-red-500 ring-red-500': ficheNavetteForm.errors.phone_beneficiary }"
-                                required
-                            />
-                            <p v-if="ficheNavetteForm.errors.phone_beneficiary" class="mt-1 text-sm text-red-600">{{ ficheNavetteForm.errors.phone_beneficiary }}</p>
-                        </div>
+                    <div v-if="!isSelfSelected" class="space-y-3 p-3 bg-gray-50 rounded-md">
+                        <h4 class="text-sm font-semibold text-gray-700 mb-2">Insured Person Details *</h4>
+                        <PatientSelector
+                            v-model="ficheNavetteForm.insured_id"
+                            :allPatients="allPatients"
+                            @patientAdded="handleinsuredAdded"
+                            label="LAB"
+                        />
+                        <p v-if="ficheNavetteForm.errors.insured_id" class="mt-1 text-sm text-red-600">{{ ficheNavetteForm.errors.insured_id }}</p>
                     </div>
                 </div>
 

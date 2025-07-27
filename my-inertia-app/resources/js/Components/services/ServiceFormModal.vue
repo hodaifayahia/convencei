@@ -9,7 +9,7 @@ const props = defineProps({
     allCompanies: Array, // Pass all companies for the dropdown
 });
 const allServices = [
-    { id: 1, name: 'Chirurgie' },
+    { id: 1, name: 'Actes Chirurgicale' },
     { id: 2, name: 'Hospitalisation' },
     { id: 3, name: 'Consultation' },
     { id: 4, name: 'Radiologie' },

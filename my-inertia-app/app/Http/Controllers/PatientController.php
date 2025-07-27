@@ -25,7 +25,36 @@ class PatientController extends Controller
             'patients' => $patients,
         ]);
     }
+       public function indexForPatient()
+    {
+        // Fetch all patients from the 'mysql_patients' connection
+        // The Patient model is already configured to use 'mysql_patients'
+        $patients = Patient::orderBy('created_at', 'desc')->get(); // Example: paginate for larger datasets
 
+        // Render the Patients/Index React component with the patient data
+return  redirect()->back()->with('flash', [
+            'message' => 'Patients loaded successfully.',
+            'patients' => $patients, // Send the patients data back
+        ]);
+    }    
+public function search(Request $request) // Renamed from searchPatients to search for clarity with route
+    {
+        $search = $request->get('query', ''); // Changed from 'search' to 'query' to match common search parameters and align with your Vue component's v-model name `patientSearchQuery` if you were to connect it directly.
+
+        $patients = Patient::select('id', 'Firstname', 'Lastname', 'Idnum', 'nss', 'phone', 'dateOfBirth','gender','parent') // Added phone and dateOfBirth for display
+            ->when($search, function ($query) use ($search) {
+                $query->where('Firstname', 'like', "%{$search}%")
+                    ->orWhere('Lastname', 'like', "%{$search}%")
+                    ->orWhere('Idnum', 'like', "%{$search}%")
+                    ->orWhere('nss', 'like', "%{$search}%")
+                    ->orWhere('phone', 'like', "%{$search}%"); // Added phone to search
+            })
+            ->orderBy('Lastname')
+            ->orderBy('Firstname')
+            ->get();
+
+        return response()->json($patients);
+    }
     /**
      * Show the form for creating a new resource.
      */

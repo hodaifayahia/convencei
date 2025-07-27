@@ -72,6 +72,7 @@ return [
     'collation' => 'utf8mb4_unicode_ci',
     'prefix' => '',
     'strict' => true,
+      
     'engine' => null,
     'options' => [
         PDO::ATTR_EMULATE_PREPARES => true, // Enable emulated prepared statements

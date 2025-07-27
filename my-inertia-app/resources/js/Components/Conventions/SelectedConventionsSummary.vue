@@ -118,7 +118,7 @@ const toggleCollapse = () => {
                         </div>
                         <div class="ml-4">
                             <p class="text-sm font-medium text-gray-600">Total Charge Ent.</p>
-                            <p class="text-2xl font-bold text-purple-600">{{ formatCurrency(selectedConventionsTotals.montant_prise_charge_beneficiaire) }}</p>
+                            <p class="text-2xl font-bold text-purple-600">{{ formatCurrency(selectedConventionsTotals.montant_prise_charge_entreprise) }}</p>
                         </div>
                     </div>
                 </div>
@@ -132,7 +132,7 @@ const toggleCollapse = () => {
                         </div>
                         <div class="ml-4">
                             <p class="text-sm font-medium text-gray-600">Total Charge Bén.</p>
-                            <p class="text-2xl font-bold text-pink-600">{{ formatCurrency(selectedConventionsTotals.montant_prise_charge_entreprise) }}</p>
+                            <p class="text-2xl font-bold text-pink-600">{{ formatCurrency(selectedConventionsTotals.montant_prise_charge_beneficiaire) }}</p>
                         </div>
                     </div>
                 </div>

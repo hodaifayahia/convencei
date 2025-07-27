@@ -3,12 +3,15 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+// No need to import FicheNavette model here unless you directly use FicheNavette in this file
+// use App\Models\FicheNavette;
 
-use App\Models\FicheNavette; // Import FicheNavette model
 class Patient extends Model
 {
-     protected $connection = 'mysql_patients'; // <-- THIS IS KEY
-        protected $table = 'patients'; // Specify the table name if it differs from the model name
+    // THIS IS KEY
+    protected $connection = 'mysql_patients';
+    protected $table = 'patients'; // Specify the table name if it differs from the model name
+
     protected $fillable = [
         'Firstname',
         'Lastname',
@@ -19,7 +22,8 @@ class Patient extends Model
         'gender',
         'nss',
     ];
-     public function ficheNavettes()
+
+    public function ficheNavettes()
     {
         // The foreign key 'patient_id' is on the 'fiche_navettes' table
         // The local key 'id' is on the 'patients' table (this model's table)

@@ -22,25 +22,37 @@ class FicheNavetteController extends Controller
      /**
      * Display a listing of the Fiche Navettes.
      */
-   public function index(Request $request)
+    public function index(Request $request)
     {
         // Get all filter parameters from the request
         $filters = $request->only(['search', 'status', 'start_date', 'end_date', 'company_id', 'patient_id']);
 
         // Start building the FicheNavette query with eager loading
-        $ficheNavettesQuery = FicheNavette::with(['patient', 'items.convention', 'items.convention.company']);
+        $ficheNavettesQuery = FicheNavette::with([
+            'patient',
+            'insured', // Make sure this is included
+            'items.convention',
+            'items.convention.company'
+        ]);
 
         // --- Apply the complex 'search' filter (OR conditions within this block) ---
-        if ($filters['search'] ?? null) {
+        if (!empty($filters['search'])) {
             $search = $filters['search'];
+
             $ficheNavettesQuery->where(function ($query) use ($search) {
                 // 1. Search directly on FicheNavette fields
                 $query->where('FNnumber', 'like', '%' . $search . '%')
                     ->orWhere('status', 'like', '%' . $search . '%')
                     ->orWhere('fiche_date', 'like', '%' . $search . '%');
 
-                // 2. Search on Patient model and get matching patient IDs
-                $matchingPatientIds = Patient::where(function ($q) use ($search) {
+             
+                // 3. Search on Company name through nested relationships (items -> convention -> company)
+                $query->orWhereHas('items.convention.company', function ($q) use ($search) {
+                    $q->where('name', 'like', '%' . $search . '%');
+                });
+
+                // 4. Search on Patient fields through relationship (This was missing from the main OR block)
+                $query->orWhereHas('patient', function ($q) use ($search) {
                     $q->where('Firstname', 'like', '%' . $search . '%')
                         ->orWhere('Lastname', 'like', '%' . $search . '%')
                         ->orWhere('Parent', 'like', '%' . $search . '%')
@@ -48,35 +60,15 @@ class FicheNavetteController extends Controller
                         ->orWhere('Idnum', 'like', '%' . $search . '%')
                         ->orWhere('nss', 'like', '%' . $search . '%')
                         ->orWhere('dateOfBirth', 'like', '%' . $search . '%');
-                })->pluck('id')->toArray();
-
-                // Add a condition to the FicheNavette query if there are matching patient IDs
-                if (!empty($matchingPatientIds)) {
-                    $query->orWhereIn('patient_id', $matchingPatientIds);
-                }
-
-                // 3. Search on beneficiary fields (if not 'adherent')
-                $query->orWhere(function ($q) use ($search) {
-                    $q->where('family_auth', '!=', 'adherent')
-                        ->where(function ($qq) use ($search) {
-                            $qq->where('first_name_beneficiary', 'like', '%' . $search . '%')
-                                ->orWhere('last_name_beneficiary', 'like', '%' . $search . '%')
-                                ->orWhere('phone_beneficiary', 'like', '%' . $search . '%');
-                        });
-                });
-
-                // 4. Search on Company name
-                $query->orWhereHas('items.convention.company', function ($q) use ($search) {
-                    $q->where('name', 'like', '%' . $search . '%');
                 });
             });
         }
 
-        // --- Apply specific filters (AND conditions) ---
+        // --- Apply specific filters (AND conditions, chainable) ---
 
         // Filter by Status
         $ficheNavettesQuery->when($filters['status'] ?? null, function ($query, $status) {
-            if ($status !== 'All') { // Assuming 'All' is a special value to show all statuses
+            if ($status !== 'All' && $status !== '') {
                 $query->where('status', $status);
             }
         });
@@ -106,22 +98,24 @@ class FicheNavetteController extends Controller
         // Execute the query, order, and paginate
         $ficheNavettes = $ficheNavettesQuery->orderBy('created_at', 'desc')
             ->paginate(10)
-            ->withQueryString(); // Keep all filter parameters in pagination links
+            ->withQueryString();
 
-        // Fetch all patients and companies to populate dropdowns on the frontend
-        $allPatients = Patient::orderBy('Lastname')->get(['id', 'Firstname', 'Lastname', 'Idnum']);
+        // Fetch all patients (only IDs and names for dropdown, if needed)
+        // $allPatients = Patient::select('id', 'Firstname', 'Lastname','phone')->get();
+
+        // Fetch all companies for dropdowns
         $allCompanies = Company::orderBy('name')->get(['id', 'name']);
 
-        // Get the next FNnumber for the modal to display
+        // Get the next FNnumber (assuming this method exists in your controller)
         $nextFNnumber = $this->getNextFNnumber();
 
         return Inertia::render('FicheNavettes/Index', [
             'ficheNavettes' => $ficheNavettes,
-            'allPatients' => $allPatients,
-            'allCompanies' => $allCompanies, // Pass all companies for the dropdown
-            'filters' => $filters, // Pass all current filters back to the frontend
-            'flash' => session('flash'), // Assuming you still need flash messages
-            'nextFNnumber' => $nextFNnumber, // Pass the next FNnumber to the frontend
+            'allCompanies' => $allCompanies,
+            // 'allPatients' => $allPatients,
+            'filters' => $filters,
+            'flash' => session('flash'),
+            'nextFNnumber' => $nextFNnumber,
         ]);
     }
         // Helper method to generate the next FNnumber
@@ -253,24 +247,10 @@ class FicheNavetteController extends Controller
         'family_auth' => 'required|string|in:ascendant,descendant,conjoint,adherent,autre', // Required and must be one of the specified values
 
         // Beneficiary fields are required UNLESS family_auth is 'adherent'
-        'first_name_beneficiary' => [
-            Rule::requiredIf(fn () => $request->input('family_auth') !== 'adherent'),
-            'nullable', // Use nullable because required_if handles the presence
-            'string',
-            'max:255',
-        ],
-        'last_name_beneficiary' => [
-            Rule::requiredIf(fn () => $request->input('family_auth') !== 'adherent'),
+        'insured_id' => [
             'nullable',
-            'string',
-            'max:255',
         ],
-        'phone_beneficiary' => [
-            Rule::requiredIf(fn () => $request->input('family_auth') !== 'adherent'),
-            'nullable',
-            'string',
-            'max:20',
-        ],
+    
         'email_beneficiary' => 'nullable|email|max:255',
         'address_beneficiary' => 'nullable|string|max:255',
         'prise_en_charge_number' => 'nullable|string|max:255',
@@ -325,11 +305,7 @@ class FicheNavetteController extends Controller
             'status' => $validated['status'] ?? 'pending', // Default status if not provided
 
             // Include beneficiary fields conditionally, using null coalescing for safety
-            'first_name_beneficiary' => $validated['first_name_beneficiary'] ?? null,
-            'last_name_beneficiary' => $validated['last_name_beneficiary'] ?? null,
-            'phone_beneficiary' => $validated['phone_beneficiary'] ?? null,
-            'email_beneficiary' => $validated['email_beneficiary'] ?? null,
-            'address_beneficiary' => $validated['address_beneficiary'] ?? null,
+            'insured_id' => $validated['insured_id'] ?? null, // This is the new field for the insured patient
             'prise_en_charge_number' => $validated['prise_en_charge_number'] ?? null,
             'number_mutuelle' => $validated['number_mutuelle'] ?? null,
         ]);
@@ -388,23 +364,8 @@ class FicheNavetteController extends Controller
             'family_auth' => 'required|string|in:ascendant,descendant,conjoint,adherent,autre',
             
             // Beneficiary fields are required UNLESS family_auth is 'adherent'
-            'first_name_beneficiary' => [
-                Rule::requiredIf(fn () => $request->input('family_auth') !== 'adherent'),
+            'insured_id' => [
                 'nullable',
-                'string',
-                'max:255',
-            ],
-            'last_name_beneficiary' => [
-                Rule::requiredIf(fn () => $request->input('family_auth') !== 'adherent'),
-                'nullable',
-                'string',
-                'max:255',
-            ],
-            'phone_beneficiary' => [
-                Rule::requiredIf(fn () => $request->input('family_auth') !== 'adherent'),
-                'nullable',
-                'string',
-                'max:20',
             ],
             'email_beneficiary' => 'nullable|email|max:255',
             'address_beneficiary' => 'nullable|string|max:255',
@@ -432,11 +393,7 @@ class FicheNavetteController extends Controller
                 'patient_share' => $validated['patient_share'],
                 'organisme_share' => $validated['organisme_share'],
                 'status' => $validated['status'],
-                'first_name_beneficiary' => $validated['first_name_beneficiary'] ?? null,
-                'last_name_beneficiary' => $validated['last_name_beneficiary'] ?? null,
-                'phone_beneficiary' => $validated['phone_beneficiary'] ?? null,
-                'email_beneficiary' => $validated['email_beneficiary'] ?? null,
-                'address_beneficiary' => $validated['address_beneficiary'] ?? null,
+                'insured_id' => $validated['insured_id'] ?? null, // This is the new field for the insured patient
                 'prise_en_charge_number' => $validated['prise_en_charge_number'] ?? null,
                 'number_mutuelle' => $validated['number_mutuelle'] ?? null,
             ]);
