@@ -10,6 +10,15 @@ import PrintTicketButton from '@/Components/FicheNavette/PrintTicketButton.vue';
 import ConventionForm from '@/Components/Conventions/ConventionForm.vue';
 
 const props = defineProps({
+
+    allSpecializations: {
+        type: Array,
+        default: () => [],
+    },
+    allDoctors: {
+        type: Array,
+        default: () => [],
+    },
     conventions: {
         type: Object, // Laravel pagination object (now client-side managed)
         required: true,
@@ -381,6 +390,8 @@ watch(() => props.filters, (newFilters, oldFilters) => {
           <FicheNavetteCreator
     :selectedConventions="selectedConventionsComputed"
     :allPatients="props.allPatients"
+    :allSpecializations="props.allSpecializations"
+    :allDoctors="props.allDoctors"
     :nextFNnumber="props.nextFNnumber"
     @ficheNavetteCreated="handleFicheNavetteCreated"
 />

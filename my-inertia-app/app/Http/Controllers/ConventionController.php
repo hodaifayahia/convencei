@@ -6,6 +6,8 @@ use App\Models\Convention;
 use App\Models\Service; // For dropdowns
 use App\Models\Company; // For dropdowns
 use App\Models\Patient; // For dropdowns
+use App\Models\Doctor; // For dropdowns
+use App\Models\Specialization; // For dropdowns
 use App\Models\FicheNavette; // For next FN number
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -58,7 +60,10 @@ class ConventionController extends Controller
         
         // Optimize patient loading - only load first 100 or use lazy loading (if used in dropdown directly)
         // If 'allPatients' is for a search/select input, consider an API endpoint for dynamic loading
-        $allPatients = Patient::limit(50)->get();
+        // $allPatients = Patient::limit(50)->get();
+        $alldoctors = Doctor::with('user')->get(); // Eager load the user relationship
+        $allSpecializations = Specialization::select('id', 'name')->get(); // Assuming you have a Specialization model
+
 
         $nextFNnumber = $this->getNextFNnumber();
 
@@ -71,9 +76,11 @@ class ConventionController extends Controller
             'allServices' => $allServices,
             'allCompanies' => $allCompanies,
             'nextFNnumber' => $nextFNnumber,
+            'allDoctors' => $alldoctors, // Pass all doctors for dropdown
+            'allSpecializations' => $allSpecializations, // Pass all specializations for dropdown
             'selectedService' => $selectedService, // Pass selected service object if needed for display
             'selectedCompany' => $selectedCompany, // Pass selected company object if needed for display
-            'allPatients' => $allPatients,
+            // 'allPatients' => $allPatients,
             'filters' => [ // Pass the current active filters back to the frontend
                 'search' => $search,
                 'perPage' => (int)$perPage, // Cast to int to ensure type consistency

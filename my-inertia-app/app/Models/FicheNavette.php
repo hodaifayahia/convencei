@@ -2,11 +2,16 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use App\Models\Patient; // This import is good
+use Illuminate\Support\Facades\DB; // Make sure this is imported
 
 class FicheNavette extends Model
 {
+    use HasFactory; // Ensure HasFactory is used if you generate factories
+
+    protected $table = 'fiche_navettes';
+
     protected $fillable = [
         'patient_id',
         'fiche_date',
@@ -17,26 +22,25 @@ class FicheNavette extends Model
         'status',
         'FNnumber',
         'family_auth',
-       'insured_id', // This is the new field for the insured patient
+        'insured_id',
         'prise_en_charge_number',
         'number_mutuelle',
     ];
 
-    // Define relationship to Patient
     public function patient()
     {
-        // Laravel should automatically use the 'patient_db' connection specified in the Patient model
-        // when this relationship is resolved. No changes needed here.
-        return $this->belongsTo(Patient::class , 'patient_id', 'id');
+        return $this->belongsTo(Patient::class, 'patient_id', 'id');
     }
-  public function insured()
-{
-    return $this->belongsTo(Patient::class, 'insured_id', 'id'); // This is the new field for the insured patient
-}
 
-    // Define relationship to FicheNavetteItem
+    public function insured()
+    {
+        return $this->belongsTo(Patient::class, 'insured_id', 'id');
+    }
+
     public function items()
     {
         return $this->hasMany(FicheNavetteItem::class);
     }
+
+   
 }

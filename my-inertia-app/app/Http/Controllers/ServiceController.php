@@ -6,6 +6,8 @@ use App\Models\Service;
 use App\Models\Company;
 use App\Models\Patient;
 use App\Models\Convention;
+use App\Models\Doctor;
+use App\Models\Specialization;
 use App\Models\FicheNavette;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -62,6 +64,8 @@ class ServiceController extends Controller
             $servicesQuery->where('company_id', $companyId);
         }
         $services = $servicesQuery->get(['id', 'name', 'company_id']);
+           $alldoctors = Doctor::with('user')->get(); // Eager load the user relationship
+            $allSpecializations = Specialization::select('id', 'name')->get(); // Assuming you have a Specialization model
 
 
         $allCompanies = Company::orderBy('name')->get(['id', 'name', 'abbreviation']); // Added abbreviation for CompanyCard
@@ -82,6 +86,8 @@ class ServiceController extends Controller
             'services' => $services, // Pass the services that are filtered by selected company (or all)
             'allCompanies' => $allCompanies,
             'nextFNnumber' => $nextFNnumber,
+             'allDoctors' => $alldoctors, // Pass all doctors for dropdown
+            'allSpecializations' => $allSpecializations, // Pass all specializations for dropdown
             'selectedService' => $selectedService,
             'selectedCompany' => $selectedCompany,
             'filters' => [

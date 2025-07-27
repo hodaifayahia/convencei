@@ -4,7 +4,9 @@ namespace App\Http\Controllers;
 
 use App\Models\FicheNavette;
 use App\Models\FicheNavetteItem;
+use App\Models\DoctorFicheNavette;
 use App\Models\Convention; // Assuming your conventions are stored as Convention model
+use App\Models\Doctor; // Assuming your conventions are stored as Convention model
 use App\Models\Patient; // Assuming your conventions are stored as Convention model
 use App\Models\Company; // Assuming your conventions are stored as Convention model
 use Illuminate\Http\Request;
@@ -22,102 +24,132 @@ class FicheNavetteController extends Controller
      /**
      * Display a listing of the Fiche Navettes.
      */
-    public function index(Request $request)
-    {
-        // Get all filter parameters from the request
-        $filters = $request->only(['search', 'status', 'start_date', 'end_date', 'company_id', 'patient_id']);
+   public function index(Request $request)
+{
+    // Get filter parameters
+    $filters = $request->only(['search', 'status', 'start_date', 'end_date', 'company_id', 'patient_id']);
 
-        // Start building the FicheNavette query with eager loading
-        $ficheNavettesQuery = FicheNavette::with([
-            'patient',
-            'insured', // Make sure this is included
-            'items.convention',
-            'items.convention.company'
-        ]);
+    // Build the FicheNavette query with regular eager loading
+    $ficheNavettesQuery = FicheNavette::with([
+        'patient',
+        'insured',
+        'items.convention',
+        'items.convention.company'
+    ]);
 
-        // --- Apply the complex 'search' filter (OR conditions within this block) ---
-        if (!empty($filters['search'])) {
-            $search = $filters['search'];
+    // Apply your existing filters...
+    if (!empty($filters['search'])) {
+        $search = $filters['search'];
+        $ficheNavettesQuery->where(function ($query) use ($search) {
+            $query->where('FNnumber', 'like', '%' . $search . '%')
+                ->orWhere('status', 'like', '%' . $search . '%')
+                ->orWhere('fiche_date', 'like', '%' . $search . '%');
 
-            $ficheNavettesQuery->where(function ($query) use ($search) {
-                // 1. Search directly on FicheNavette fields
-                $query->where('FNnumber', 'like', '%' . $search . '%')
-                    ->orWhere('status', 'like', '%' . $search . '%')
-                    ->orWhere('fiche_date', 'like', '%' . $search . '%');
-
-             
-                // 3. Search on Company name through nested relationships (items -> convention -> company)
-                $query->orWhereHas('items.convention.company', function ($q) use ($search) {
-                    $q->where('name', 'like', '%' . $search . '%');
-                });
-
-                // 4. Search on Patient fields through relationship (This was missing from the main OR block)
-                $query->orWhereHas('patient', function ($q) use ($search) {
-                    $q->where('Firstname', 'like', '%' . $search . '%')
-                        ->orWhere('Lastname', 'like', '%' . $search . '%')
-                        ->orWhere('Parent', 'like', '%' . $search . '%')
-                        ->orWhere('phone', 'like', '%' . $search . '%')
-                        ->orWhere('Idnum', 'like', '%' . $search . '%')
-                        ->orWhere('nss', 'like', '%' . $search . '%')
-                        ->orWhere('dateOfBirth', 'like', '%' . $search . '%');
-                });
+            $query->orWhereHas('items.convention.company', function ($q) use ($search) {
+                $q->where('name', 'like', '%' . $search . '%');
             });
-        }
 
-        // --- Apply specific filters (AND conditions, chainable) ---
+            $query->orWhereHas('patient', function ($q) use ($search) {
+                $q->where('Firstname', 'like', '%' . $search . '%')
+                    ->orWhere('Lastname', 'like', '%' . $search . '%')
+                    ->orWhere('Parent', 'like', '%' . $search . '%')
+                    ->orWhere('phone', 'like', '%' . $search . '%')
+                    ->orWhere('Idnum', 'like', '%' . $search . '%')
+                    ->orWhere('nss', 'like', '%' . $search . '%')
+                    ->orWhere('dateOfBirth', 'like', '%' . $search . '%');
+            });
 
-        // Filter by Status
-        $ficheNavettesQuery->when($filters['status'] ?? null, function ($query, $status) {
-            if ($status !== 'All' && $status !== '') {
-                $query->where('status', $status);
-            }
-        });
-
-        // Filter by Start Date
-        $ficheNavettesQuery->when($filters['start_date'] ?? null, function ($query, $startDate) {
-            $query->whereDate('created_at', '>=', $startDate);
-        });
-
-        // Filter by End Date
-        $ficheNavettesQuery->when($filters['end_date'] ?? null, function ($query, $endDate) {
-            $query->whereDate('created_at', '<=', $endDate);
-        });
-
-        // Filter by Company ID
-        $ficheNavettesQuery->when($filters['company_id'] ?? null, function ($query, $companyId) {
-            $query->whereHas('items.convention.company', function ($q) use ($companyId) {
-                $q->where('id', $companyId);
+            // Add doctor search from the other database
+            $query->orWhereExists(function ($subQuery) use ($search) {
+                $subQuery->select(DB::raw(1))
+                    ->from('doctor_fiche_navettes as dfn')
+                    ->whereColumn('dfn.fiche_navette_id', 'fiche_navettes.id')
+                    ->whereExists(function ($doctorQuery) use ($search) {
+                        $doctorQuery->select(DB::raw(1))
+                            ->from((new Doctor())->getConnection()->getDatabaseName() . '.doctors as d')
+                            ->join((new Doctor())->getConnection()->getDatabaseName() . '.users as u', 'd.user_id', '=', 'u.id')
+                            ->whereColumn('d.id', 'dfn.doctor_id')
+                            ->where(function ($nameQuery) use ($search) {
+                                $nameQuery->where('u.name', 'like', '%' . $search . '%')
+                                    ->orWhere('u.email', 'like', '%' . $search . '%');
+                            });
+                    });
             });
         });
-
-        // Filter by Patient ID
-        $ficheNavettesQuery->when($filters['patient_id'] ?? null, function ($query, $patientId) {
-            $query->where('patient_id', $patientId);
-        });
-
-        // Execute the query, order, and paginate
-        $ficheNavettes = $ficheNavettesQuery->orderBy('created_at', 'desc')
-            ->paginate(10)
-            ->withQueryString();
-
-        // Fetch all patients (only IDs and names for dropdown, if needed)
-        // $allPatients = Patient::select('id', 'Firstname', 'Lastname','phone')->get();
-
-        // Fetch all companies for dropdowns
-        $allCompanies = Company::orderBy('name')->get(['id', 'name']);
-
-        // Get the next FNnumber (assuming this method exists in your controller)
-        $nextFNnumber = $this->getNextFNnumber();
-
-        return Inertia::render('FicheNavettes/Index', [
-            'ficheNavettes' => $ficheNavettes,
-            'allCompanies' => $allCompanies,
-            // 'allPatients' => $allPatients,
-            'filters' => $filters,
-            'flash' => session('flash'),
-            'nextFNnumber' => $nextFNnumber,
-        ]);
     }
+
+    // Apply other filters
+    $ficheNavettesQuery->when($filters['status'] ?? null, function ($query, $status) {
+        if ($status !== 'All' && $status !== '') {
+            $query->where('status', $status);
+        }
+    });
+
+    $ficheNavettesQuery->when($filters['start_date'] ?? null, function ($query, $startDate) {
+        $query->whereDate('created_at', '>=', $startDate);
+    });
+
+    $ficheNavettesQuery->when($filters['end_date'] ?? null, function ($query, $endDate) {
+        $query->whereDate('created_at', '<=', $endDate);
+    });
+
+    $ficheNavettesQuery->when($filters['company_id'] ?? null, function ($query, $companyId) {
+        $query->whereHas('items.convention.company', function ($q) use ($companyId) {
+            $q->where('id', $companyId);
+        });
+    });
+
+    $ficheNavettesQuery->when($filters['patient_id'] ?? null, function ($query, $patientId) {
+        $query->where('patient_id', $patientId);
+    });
+
+    // Execute the query
+    $ficheNavettes = $ficheNavettesQuery->orderBy('created_at', 'desc')
+        ->paginate(10)
+        ->withQueryString();
+
+    // Get all fiche navette IDs from current page
+    $ficheNavetteIds = $ficheNavettes->pluck('id')->toArray();
+
+    // Get doctor relationships for current page fiches
+    $doctorFicheNavettes = DoctorFicheNavette::whereIn('fiche_navette_id', $ficheNavetteIds)->get();
+
+    // Get unique doctor IDs
+    $doctorIds = $doctorFicheNavettes->pluck('doctor_id')->unique()->toArray();
+
+    // Get doctors with their users and specializations from the other database
+    $doctors = Doctor::with(['user', 'specialization'])
+        ->whereIn('id', $doctorIds)
+        ->get()
+        ->keyBy('id');
+
+    // Attach doctors to each fiche navette
+    $ficheNavettes->getCollection()->transform(function ($ficheNavette) use ($doctorFicheNavettes, $doctors) {
+        // Get doctor IDs for this fiche navette
+        $doctorIdsForFiche = $doctorFicheNavettes
+            ->where('fiche_navette_id', $ficheNavette->id)
+            ->pluck('doctor_id');
+
+        // Get the actual doctor objects
+        $ficheNavette->doctors = $doctorIdsForFiche->map(function ($doctorId) use ($doctors) {
+            return $doctors->get($doctorId);
+        })->filter()->values();
+
+        return $ficheNavette;
+    });
+
+    $allCompanies = Company::orderBy('name')->get(['id', 'name']);
+    $nextFNnumber = $this->getNextFNnumber();
+
+    return Inertia::render('FicheNavettes/Index', [
+        'ficheNavettes' => $ficheNavettes,
+        'allCompanies' => $allCompanies,
+        'filters' => $filters,
+        'flash' => session('flash'),
+        'nextFNnumber' => $nextFNnumber,
+    ]);
+}
+
         // Helper method to generate the next FNnumber
     private function getNextFNnumber(): string
     {
@@ -250,6 +282,7 @@ class FicheNavetteController extends Controller
         'insured_id' => [
             'nullable',
         ],
+        'doctor_ids' => 'nullable|array', // New field for multiple doctors
     
         'email_beneficiary' => 'nullable|email|max:255',
         'address_beneficiary' => 'nullable|string|max:255',
@@ -310,6 +343,17 @@ class FicheNavetteController extends Controller
             'number_mutuelle' => $validated['number_mutuelle'] ?? null,
         ]);
 
+        // If you have multiple doctors, you can handle them here
+        if (isset($validated['doctor_ids']) && is_array($validated['doctor_ids'])) {
+            // Assuming you have a many-to-many relationship set up for doctors
+            foreach ($validated['doctor_ids'] as $doctorId) {
+             DoctorFicheNavette::create([
+                    'fiche_navette_id' => $ficheNavette->id,
+                    'doctor_id' => $doctorId,
+                ]);
+
+            }
+        }
         // Attach selected conventions as FicheNavetteItems
         foreach ($selectedConventions as $convention) {
             FicheNavetteItem::create([

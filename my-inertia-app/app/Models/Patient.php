@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Model;
 class Patient extends Model
 {
     // THIS IS KEY
-    protected $connection = 'mysql_patients';
+    protected $connection = 'mysql_main';
     protected $table = 'patients'; // Specify the table name if it differs from the model name
 
     protected $fillable = [

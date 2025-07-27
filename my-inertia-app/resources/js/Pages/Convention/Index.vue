@@ -9,6 +9,7 @@ import SelectedConventionsSummary from '@/Components/Conventions/SelectedConvent
 import ConventionList from '@/Components/Conventions/ConventionList.vue';
 import FicheNavetteCreator from '@/Components/Conventions/FicheNavetteCreator.vue';
 import { useToast } from 'vue-toastification'; // Import toast for notifications
+import { all } from 'axios';
 
 const toast = useToast(); // Initialize toast
 const page = usePage(); // Initialize usePage to access Inertia page props
@@ -29,6 +30,14 @@ const props = defineProps({
         }),
     },
     allServices: {
+        type: Array,
+        default: () => [],
+    },
+    allSpecializations: {
+        type: Array,
+        default: () => [],
+    },
+    allDoctors: {
         type: Array,
         default: () => [],
     },
@@ -245,6 +254,8 @@ watch(() => props.filters, (newFilters) => {
                 <FicheNavetteCreator
                     :selectedConventions="selectedConventions"
                     :nextFNnumber="nextFNnumber"
+                    :allSpecializations="allSpecializations"
+                    :allDoctors="allDoctors"
                     @ficheNavetteCreated="handleFicheNavetteCreated"
                 />
 

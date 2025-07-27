@@ -303,12 +303,12 @@ watch(() => [props.filters.company_id, props.filters.service_id], ([newCompanyId
             </div>
 
          <SelectedConventionsSummary
-    v-if="props.selectedConventions.length > 0"
-    :selectedConventions="props.selectedConventions"
-    @removeSelection="(conventionId) => emit('toggleConventionSelection', { id: conventionId, isDelete: true })"
-    @clearAllSelections="handleClearAllSelections"
-    class="mt-4"
-/>
+            v-if="props.selectedConventions.length > 0"
+            :selectedConventions="props.selectedConventions"
+            @removeSelection="(conventionId) => emit('toggleConventionSelection', { id: conventionId, isDelete: true })"
+            @clearAllSelections="handleClearAllSelections"
+            class="mt-4"
+        />
             
             <div v-if="currentConventionsOnPage.length > 0">
                 <div class="flex items-center justify-between mb-4 p-4 bg-gray-50 rounded-lg">

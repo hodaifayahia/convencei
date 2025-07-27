@@ -24,6 +24,14 @@ const props = defineProps({
         type: Array,
         default: () => [],
     },
+    allSpecializations: {
+        type: Array,
+        default: () => [],
+    },
+    allDoctors: {
+        type: Array,
+        default: () => [],
+    },
     selectedService: {
         type: Object,
         default: null,
@@ -331,6 +339,8 @@ watch(() => props.flash, (newFlash) => {
 
                     <CompanyConventionsTable
                         :conventions="conventions"
+                        :allSpecializations="props.allSpecializations"
+                        :allDoctors="props.allDoctors"
                         :allPatients="props.allPatients"
                         :selected-company="selectedCompany"
                         :nextFNnumber="nextFNnumber"

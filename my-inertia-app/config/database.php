@@ -61,23 +61,23 @@ return [
                 PDO::MYSQL_ATTR_SSL_CA => env('MYSQL_ATTR_SSL_CA'),
             ]) : [],
         ],
-       'mysql_patients' => [
-    'driver' => 'mysql',
-    'host' => env('PATIENTS_DB_HOST', '127.0.0.1'),
-    'port' => env('PATIENTS_DB_PORT', '3306'),
-    'database' => env('PATIENTS_DB_DATABASE', 'appointment'),
-    'username' => env('PATIENTS_DB_USERNAME', 'root'),
-    'password' => env('PATIENTS_DB_PASSWORD', ''),
-    'charset' => 'utf8mb4',
-    'collation' => 'utf8mb4_unicode_ci',
-    'prefix' => '',
-    'strict' => true,
-      
-    'engine' => null,
-    'options' => [
-        PDO::ATTR_EMULATE_PREPARES => true, // Enable emulated prepared statements
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, // Set error mode to exceptions
-    ],
+       'mysql_main' => [
+            'driver' => 'mysql',
+            'host' => env('PATIENTS_DB_HOST', '127.0.0.1'),
+            'port' => env('PATIENTS_DB_PORT', '3306'),
+            'database' => env('PATIENTS_DB_DATABASE', 'appointment'),
+            'username' => env('PATIENTS_DB_USERNAME', 'root'),
+            'password' => env('PATIENTS_DB_PASSWORD', ''),
+            'charset' => 'utf8mb4',
+            'collation' => 'utf8mb4_unicode_ci',
+            'prefix' => '',
+            'strict' => true,
+            
+            'engine' => null,
+            'options' => [
+                PDO::ATTR_EMULATE_PREPARES => true, // Enable emulated prepared statements
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, // Set error mode to exceptions
+            ],
 ],
 
         'mariadb' => [

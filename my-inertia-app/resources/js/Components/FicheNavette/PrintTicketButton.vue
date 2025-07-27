@@ -57,11 +57,11 @@ const preloadHeaderImage = async () => {
 const getBase64ImageOptimized = async (url) => {
     try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3000); // Reduced timeout
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
 
         const response = await fetch(url, { 
             signal: controller.signal,
-            cache: 'force-cache' // Use browser cache
+            cache: 'force-cache'
         });
         clearTimeout(timeoutId);
 
@@ -79,16 +79,24 @@ const getBase64ImageOptimized = async (url) => {
     }
 };
 
-// Pre-compute values to avoid repeated calculations
+// Pre-compute values to avoid repeated calculations including doctors
 const ticketData = computed(() => ({
     patientFirstName: props.ficheNavette.patient?.Firstname || 'N/A',
     patientLastName: props.ficheNavette.patient?.Lastname || 'N/A',
     patientPhone: props.ficheNavette.patient?.phone || 'N/A',
-    assuredFirstName: props.ficheNavette.first_name_beneficiary || 'N/A',
-    assuredLastName: props.ficheNavette.last_name_beneficiary || 'N/A',
-    assuredPhone: props.ficheNavette.phone_beneficiary || 'N/A',
+    assuredFirstName: props.ficheNavette.insured?.Firstname || 'N/A',
+    assuredLastName: props.ficheNavette.insured?.Lastname || 'N/A',
+    assuredPhone: props.ficheNavette.insured?.phone || 'N/A',
     fnNumber: props.ficheNavette.FNnumber || 'N/A',
     ficheDate: props.ficheNavette.fiche_date || 'N/A',
+    // Add doctors information
+    doctorsNames: props.ficheNavette.doctors && props.ficheNavette.doctors.length > 0 
+        ? props.ficheNavette.doctors.map(doctor => {
+            const name = doctor.user?.name || 'Médecin Inconnu';
+            const specialization = doctor.specialization?.name || '';
+            return specialization ? `${name}` : name;
+          }).join(', ')
+        : 'Aucun médecin assigné',
     currentDateTime: new Date().toLocaleString('fr-FR', {
         day: '2-digit',
         month: '2-digit',
@@ -105,7 +113,7 @@ const prestationsHtml = computed(() => {
 
     const rows = props.ficheNavette.items.map(item => {
         const designation = item.convention?.designation_prestation || '-';
-        const chargeEnt = formatCurrency(item.convention?.montant_prise_charge_entreprise);
+        const chargeEnt = formatCurrency(item.convention?.montant_prise_charge_beneficiaire || 0);
         return `<tr><td>${designation}</td><td>${chargeEnt}</td></tr>`;
     }).join('');
 
@@ -116,7 +124,7 @@ const prestationsHtml = computed(() => {
         <div class="prestations-list">
             <table>
                 <thead>
-                    <tr><th>Désignation</th><th>Charge Ent.</th></tr>
+                    <tr><th>Désignation</th><th>Charge BEN.</th></tr>
                 </thead>
                 <tbody>${rows}</tbody>
             </table>
@@ -241,7 +249,7 @@ const optimizedCSS = `
     }
 `;
 
-// Streamlined print function
+// Streamlined print function with doctors and date repositioned
 const printTicket = async () => {
     const data = ticketData.value;
     
@@ -262,13 +270,18 @@ const printTicket = async () => {
         <div style="text-align: center;">${headerImageHtml}</div>
         <div class="ticket-content">
             <div class="ticket-row">
+                <span class="ticket-label">Date :</span>
+                <span class="ticket-value">${data.ficheDate}</span>
+            </div>
+            <div class="ticket-row">
+                <span class="ticket-label">FN Numéro :</span>
+                <span class="ticket-value">${data.fnNumber}</span>
+            </div>
+            <div class="ticket-row">
                 <span class="ticket-label">Patient :</span>
                 <span class="ticket-value">${data.patientFirstName.toUpperCase()} ${data.patientLastName.toUpperCase()}</span>
             </div>
-            <div class="ticket-row">
-                <span class="ticket-label">Téléphone Patient :</span>
-                <span class="ticket-value">${data.patientPhone}</span>
-            </div>
+
             <div class="ticket-row">
                 <span class="ticket-label">Assuré :</span>
                 <span class="ticket-value">${data.assuredLastName.toUpperCase()} ${data.assuredFirstName.toUpperCase()}</span>
@@ -278,21 +291,13 @@ const printTicket = async () => {
                 <span class="ticket-value">${data.assuredPhone}</span>
             </div>
             <div class="ticket-row">
-                <span class="ticket-label">FN Numéro :</span>
-                <span class="ticket-value">${data.fnNumber}</span>
-            </div>
-            <div class="ticket-row">
-                <span class="ticket-label">Date :</span>
-                <span class="ticket-value">${data.ficheDate}</span>
-            </div>
-            <div class="ticket-row">
-                <span class="ticket-label">Phone :</span>
-                <span class="ticket-value">029 23 99 99 / 05 55 88 99 97</span>
+                <span class="ticket-label">Médecin(s) :</span>
+                <span class="ticket-value">${data.doctorsNames}</span>
             </div>
             ${prestationsHtml.value}
             <div class="ticket-row">
                 <span class="ticket-label">Total Charge Bén. (Fiche) :</span>
-                <span class="ticket-value">${formatCurrency(props.ficheNavette.organisme_share)}</span>
+                <span class="ticket-value">${formatCurrency(props.ficheNavette.patient_share)}</span>
             </div>
         </div>
         <div class="ticket-footer">
